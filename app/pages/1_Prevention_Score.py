@@ -41,7 +41,8 @@ col_in, col_out = st.columns([1, 1.4])
 
 with col_in:
     st.subheader("Transaction Details")
-    amount = st.number_input("Amount (₹)", min_value=100.0, max_value=200_000.0, value=8_000.0, step=100.0)
+    amount = st.number_input("Amount (₹)", min_value=100.0, max_value=200_000.0, value=8_000.0, step=100.0,
+                              format="%.0f")  # avoids a locale-dependent decimal separator (e.g. "8000,00")
     merchant_category = st.selectbox(
         "Merchant category", ["electronics", "fashion", "grocery", "home", "beauty", "digital_goods"]
     )

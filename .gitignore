@@ -11,4 +11,10 @@ audit_log/*.jsonl
 .DS_Store
 .pytest_cache/
 *.egg-info/
+# Holds real Razorpay API secrets — never commit. Use run_app.example.sh as the
+# shareable template.
 run_app.sh
+.env
+.env.*
+!.env.example
+*.local.sh

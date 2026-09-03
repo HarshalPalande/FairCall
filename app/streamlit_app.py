@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import streamlit as st
 
-from src import config, vamp
+from src import config, decision_engine, vamp
 from src.audit import verify_chain
 from src.pipeline import load_artifacts, score_dispute
 
@@ -117,6 +117,41 @@ with col_output:
             "Note: this cost applies whether the dispute is contested or accepted — the VAMP "
             "ratio counts disputes filed, not lost. Only prevention avoids it. See the VAMP Risk page."
         )
+
+        st.markdown("---")
+        st.markdown("**Four-way decision comparison**")
+        st.caption(
+            "The original engine chooses contest vs. escalate. Visa's pre-dispute "
+            "infrastructure offers more levers, and they differ in VAMP consequence. "
+            "ESCALATE is not EV-scored — it is what happens when no automated action "
+            "is permitted."
+        )
+
+        four_way = decision_engine.decide_four_way(
+            win_prob=result["win_probability"],
+            amount=amount,
+            evidence_completeness=ecv["completeness_score"],
+            reason_code=config.REASON_CODE,
+        )
+
+        rows = []
+        for opt in four_way.options:
+            rows.append({
+                "Action": opt.action.value,
+                "EV (₹)": (f"{opt.expected_value_inr:,.0f}" if opt.ev_comparable
+                           else f"({opt.expected_value_inr:,.0f} if accepted)"),
+                "VAMP cost (₹)": f"{opt.vamp_cost_inr:,.0f}",
+                "Viable": "✅" if opt.viable else "❌",
+                "Why": opt.blocked_reason or opt.rationale,
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+        if four_way.chosen == decision_engine.DecisionAction.ESCALATE:
+            st.warning(f"**Chosen: `{four_way.chosen.value}`** — no automated action permitted.")
+        else:
+            st.success(f"**Chosen: `{four_way.chosen.value}`**")
+        for r in four_way.reasons:
+            st.write(f"- {r}")
 
         if ecv["missing_documents"]:
             st.markdown("**Missing required evidence**")

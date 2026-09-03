@@ -127,3 +127,32 @@ CE3_ANCHOR_ELEMENTS = ["ip_address", "device_id"]
 
 # Minimum total number of matching elements.
 CE3_MIN_MATCHING_ELEMENTS = 2
+
+# --- Visa RDR (Rapid Dispute Resolution) ----------------------------------
+# RDR auto-resolves eligible pre-disputes against merchant-configured rules:
+# the cardholder is refunded immediately and no chargeback posts.
+#
+# CRITICAL ASYMMETRY (see README):
+#   - Non-fraud pre-disputes resolved via RDR are EXCLUDED from the VAMP ratio.
+#   - Fraud (10.4) disputes still COUNT toward VAMP even when RDR refunds them.
+# So RDR is a strong lever for non-fraud codes like 13.1 and a much weaker one
+# for fraud codes.
+#
+# PLACEHOLDER cost assumptions — same disclosure standard as the rest of the
+# cost table: set by us, not sourced from Razorpay finance/risk ops.
+RDR_RESOLUTION_FEE_INR = 250.0
+
+# Visa permits a limited number of merchant-configured RDR rule scenarios.
+RDR_MAX_RULE_SCENARIOS = 10
+
+# Reason codes for which an RDR resolution keeps the event off the VAMP ratio.
+RDR_VAMP_EXCLUDED_REASON_CODES = ["13.1", "13.2", "13.3", "12.6"]
+
+# --- Order Insight (pre-dispute deflection) -------------------------------
+# Order Insight pushes transaction detail to the issuer at cardholder inquiry,
+# resolving billing-confusion cases before a dispute is filed at all. It only
+# works when the merchant actually HAS rich order data to push.
+ORDER_INSIGHT_COST_INR = 40.0
+# Probability a deflection attempt succeeds given complete order data.
+# PLACEHOLDER — in production this is measured from actual deflection rates.
+ORDER_INSIGHT_BASE_DEFLECT_RATE = 0.35

@@ -333,22 +333,46 @@ delivery proof before it's needed — prevention is cheaper than cure, and the b
 dispute to win is the one that never happens.
 
 This model is trained on strictly less information than the outcome detector: no
-evidence flags (evidence doesn't exist yet), no `late_filing`, no dispute-history
-aggregates — only what's known at the moment of payment (amount, category, device,
-shipping method, day of week, month). Its metrics are honestly, and expectedly, weaker:
+evidence flags (evidence doesn't exist yet), no `late_filing` — only what's known at
+the moment of payment (amount, category, device, shipping method, day of week, month,
+and this customer's own PRIOR transaction history, see below). Its metrics are
+honestly, and expectedly, weaker:
 
 | Metric | Prevention model | Outcome detector (for comparison) |
 |---|---|---|
-| ROC-AUC | 0.658 | 0.876 |
-| PR-AUC | 0.353 | 0.938 |
-| Base rate (positive class) | 21.9% | 71.6% |
+| ROC-AUC | 0.676 | 0.876 |
+| PR-AUC | 0.379 | 0.938 |
+| Base rate (positive class) | 21.6% | 71.6% |
+
+**Customer prior-history features:** the model also sees `cust_prior_txn_count`,
+`cust_prior_flag_rate`, and `cust_prior_avg_amount` — this customer's own transaction
+count, dispute rate, and average amount, computed the identical strictly-past
+cumcount/cumsum-minus-self way `src/features.py` already validated for the outcome
+detector's UID aggregates (`src/prevention.py`, `add_customer_history_features`). A
+merchant genuinely has this at payment time; it isn't a leak. This is a real, if
+modest, improvement (PR-AUC 0.353 → 0.379) — modest because the synthetic customer
+population's dispute-propensity skew is driven by a single binary "is this customer a
+chronic abuser" flag affecting ~7% of customers, not the full continuous trust
+spectrum, so there's only so much a prior-history feature can pick up. A much larger
+jump would have been the suspicious result here, not this one.
+
+Building this surfaced a real bug worth disclosing: an earlier version of
+`add_customer_history_features` re-sorted its input by `transaction_date` internally,
+even though every caller already passes pre-sorted data. With day-granularity dates
+across 120,000 rows (~164 same-day rows on average), a second independent sort
+reordered same-day ties differently than the caller's own sort, silently misaligning
+feature rows against their labels for most of the dataset — ROC-AUC collapsed to 0.497,
+indistinguishable from chance, on the first retrain. We caught it by spot-checking
+row alignment before trusting the number, not after. The fix removes the internal
+sort (the function now asserts its input is already sorted instead) — same fix, same
+principle, as the "0.50 ROC-AUC coin flip" catch below.
 
 **Disclosed modeling assumption:** the synthetic "normal" transaction background this
 model is trained against is deliberately biased so that higher-value, express-shipped,
 electronics/digital-goods purchases carry somewhat higher dispute propensity than
 routine grocery/home purchases on standard shipping (`src/prevention.py`,
 `build_transaction_dataset`). This is a directionally plausible prior we chose, not a
-pattern measured from real data — said outright so the 0.658 ROC-AUC isn't mistaken for
+pattern measured from real data — said outright so the 0.676 ROC-AUC isn't mistaken for
 a validated real-world number. An earlier version of this generator gave the two
 populations *identical* transaction-time distributions, which produced a 0.50 ROC-AUC —
 a coin flip. We caught that before writing it up, because presenting noise as "the

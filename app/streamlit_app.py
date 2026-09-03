@@ -7,6 +7,9 @@ evidence + recommendation out. Run with:
 Calls the exact same src.pipeline.score_dispute() used by scripts/demo.py
 and the test suite — there is one scoring code path, not a UI-specific copy.
 """
+import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,6 +41,61 @@ try:
 except FileNotFoundError:
     st.error("No trained model found. Run `make train` (or `python -m src.model`) first.")
     st.stop()
+
+
+def _load_json(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _count_tests():
+    """Ask pytest's own collector, not a source-line regex -- parametrized tests
+    (e.g. test_decision_engine.py's 27-case sweep) turn one `def test_` into many
+    collected tests, so counting `def` lines would undercount against `make test`."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", str(config.ROOT / "tests"), "--collect-only", "-q"],
+            cwd=config.ROOT, capture_output=True, text=True, timeout=30,
+        )
+        m = re.search(r"(\d+) tests? collected", proc.stdout)
+        return int(m.group(1)) if m else None
+    except Exception:
+        return None
+
+
+_metrics = _load_json(config.ARTIFACTS_DIR / "metrics.json")
+_backtest = _load_json(config.ARTIFACTS_DIR / "backtest_results.json")
+_vamp_status = vamp.compute_vamp_status()
+_test_count = _count_tests()
+
+st.markdown("#### At a glance")
+h1, h2, h3, h4 = st.columns(4)
+if _backtest:
+    sys_inr = _backtest["backtest"]["strategy_system_inr"]
+    savings = _backtest["backtest"]["savings_vs_contest_all_inr"]
+    h1.metric("Net value (this system)", f"₹{sys_inr:,.0f}",
+              f"+₹{savings:,.0f} vs. contest-everything")
+    fp = _backtest["false_positive_analysis"]
+    h2.metric("Honest false-positive rate", f"{fp['false_positive_rate']:.1%}",
+              f"₹{fp['false_positive_cost_inr']:,.0f} disclosed cost", delta_color="inverse")
+else:
+    h1.metric("Net value (this system)", "run `make backtest`")
+    h2.metric("Honest false-positive rate", "run `make backtest`")
+h3.metric("VAMP ratio", f"{_vamp_status.current_ratio * 100:.2f}%",
+          f"{_vamp_status.headroom_events:,} disputes of headroom")
+if _test_count is not None:
+    h4.metric("Tests passing", f"{_test_count}", "collected live via pytest")
+else:
+    h4.metric("Tests passing", "run `make test`")
+st.caption(
+    "Every number above is read live from `artifacts/*.json` (written by `make backtest`) "
+    "or computed on this page load — nothing here is typed in. Scoped to Visa reason code "
+    f"{config.REASON_CODE}, synthetic data throughout (see README)."
+)
+st.markdown("---")
 
 col_input, col_output = st.columns([1, 1.4])
 

@@ -52,6 +52,33 @@ marginal = vamp.marginal_vamp_cost(status)
 with col_out:
     st.subheader("Standing")
 
+    ratio_pct = status.current_ratio * 100
+    threshold_pct_disp = status.threshold * 100
+    gauge_max = max(threshold_pct_disp * 1.6, ratio_pct * 1.1, 0.1)
+    ratio_frac = min(ratio_pct / gauge_max, 1.0) * 100
+    threshold_frac = min(threshold_pct_disp / gauge_max, 1.0) * 100
+
+    st.markdown(
+        f"""
+<div style="margin-top:6px;">
+  <div style="position:relative; height:22px; border-radius:6px; overflow:visible;
+              background:linear-gradient(90deg, #22c55e 0%, #eab308 {threshold_frac * 0.7:.1f}%,
+              #ef4444 {threshold_frac:.1f}%, #7f1d1d 100%);">
+    <div style="position:absolute; left:{threshold_frac:.1f}%; top:-4px; bottom:-4px;
+                width:2px; background:#111; opacity:0.55;"></div>
+    <div style="position:absolute; left:{ratio_frac:.1f}%; top:-6px; width:0; height:0;
+                border-left:7px solid transparent; border-right:7px solid transparent;
+                border-top:10px solid #111; transform:translateX(-7px);"></div>
+  </div>
+  <div style="display:flex; justify-content:space-between; font-size:12px; margin-top:2px;
+              opacity:0.75;">
+    <span>0%</span><span>Excessive threshold {threshold_pct_disp:.2f}% →</span><span>{gauge_max:.2f}%</span>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
     m1, m2 = st.columns(2)
     m1.metric("Current VAMP ratio", f"{status.current_ratio * 100:.3f}%")
     m2.metric("Threshold", f"{status.threshold * 100:.2f}%")

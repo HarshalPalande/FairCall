@@ -27,11 +27,16 @@ def _sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
 
 
-def generate_disputes(n=config.N_DISPUTES, seed=config.SEED) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
+def generate_customer_population(rng, n_customers):
+    """Shared customer identity pool -- draws from `rng` in a fixed order.
 
-    # --- customer population -------------------------------------------
-    n_customers = max(500, n // 6)
+    Factored out so `src/prevention.py`'s background (non-disputing) population
+    can draw from the SAME customers as the dispute population instead of
+    inventing an unrelated one: seed a fresh `np.random.default_rng(seed)` and
+    call this first (before anything else consumes from it) and it reproduces
+    the exact same population `generate_disputes(seed=seed)` used internally,
+    since draws are consumed in this fixed order from a freshly-seeded stream.
+    """
     customer_ids = np.array([f"CUST{i:06d}" for i in range(n_customers)])
     # latent, never exposed as a feature: genuine long-term trustworthiness
     customer_trust = rng.beta(3, 2, size=n_customers)
@@ -39,6 +44,17 @@ def generate_disputes(n=config.N_DISPUTES, seed=config.SEED) -> pd.DataFrame:
     # disputes are effectively unwinnable regardless of evidence quality.
     is_fraud_customer = rng.random(n_customers) < 0.07
     customer_first_seen = rng.integers(0, config.DATE_RANGE_DAYS // 2, size=n_customers)
+    return customer_ids, customer_trust, is_fraud_customer, customer_first_seen
+
+
+def generate_disputes(n=config.N_DISPUTES, seed=config.SEED) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+
+    # --- customer population -------------------------------------------
+    n_customers = max(500, n // 6)
+    customer_ids, customer_trust, is_fraud_customer, customer_first_seen = (
+        generate_customer_population(rng, n_customers)
+    )
 
     # Fraud customers dispute more often (fits real-world skew).
     customer_weights = np.where(is_fraud_customer, 3.0, 1.0)

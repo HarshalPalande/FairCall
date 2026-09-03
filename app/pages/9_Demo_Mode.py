@@ -53,39 +53,53 @@ def load_prevention_model():
     return model, feature_cols
 
 
-@st.cache_data(show_spinner="Calibrating a reference threshold on a fresh 8,000-transaction pool...")
-def compute_reference_threshold(_model, _feature_cols):
-    """Calibrate the 'flagged' cutoff live, once per session, instead of trusting a
-    stale value out of artifacts/prevention_metrics.json.
+@st.cache_data(show_spinner="Scoring a fresh 8,000-transaction reference pool...")
+def compute_reference_probs(_model, _feature_cols):
+    """Score a large reference pool ONCE per session and cache the raw probabilities
+    and ground truth, rather than a single fixed threshold -- so the recall/precision
+    trade-off can be recomputed instantly as the operator drags the threshold slider,
+    without rescoring 8,000 rows on every rerun.
 
-    That JSON's threshold is rank-derived from ONE specific 18,000-row test set --
-    `sorted_probs[n_actual_disputes * 0.5]` -- which makes it an artifact of that
-    exact evaluation run's score distribution, not a portable cutoff. Reusing it
-    against a freshly-generated pool with a different score distribution produced
-    a live recall ~2x the disclosed figure in testing here -- a methodology bug,
-    not honest run-to-run noise. Recomputing the same procedure fresh, on a large
-    reference pool, right now, keeps the comparison self-consistent instead of
-    comparing two different eras of data under one number.
+    The DEFAULT threshold returned here is calibrated fresh on this pool, not trusted
+    from a stale value in artifacts/prevention_metrics.json. That JSON's threshold is
+    rank-derived from ONE specific 18,000-row test set -- `sorted_probs[n_actual_disputes
+    * 0.5]` -- which makes it an artifact of that exact evaluation run's score
+    distribution, not a portable cutoff. Reusing it against a freshly-generated pool
+    with a different score distribution produced a live recall ~2x the disclosed
+    figure in testing here -- a methodology bug, not honest run-to-run noise.
     """
-    ref_seed = config.SEED + 7  # fixed so the threshold is stable within a session, distinct from training's seed
+    ref_seed = config.SEED + 7  # fixed so the pool is stable within a session, distinct from training's seed
     pool = prevention.build_transaction_dataset(seed=ref_seed)
-    ref = pool.sample(n=8_000, random_state=ref_seed).reset_index(drop=True)
-    X = prevention.build_prevention_features(ref).reindex(columns=_feature_cols, fill_value=0)
+
+    # Build features on the FULL sorted pool first, THEN sample -- sampling
+    # before featurizing would truncate each customer's cust_prior_* history
+    # to whatever fraction of their transactions happened to land in the
+    # random sample, understating it. Same bug class already fixed in
+    # src/prevention.py::train_prevention_model(); fixed here for the same
+    # reason, so this reference figure is consistent with what a live Demo
+    # Mode batch (which sees the full pool as history) actually produces.
+    full_sorted = pool.sort_values("transaction_date").reset_index(drop=True)
+    X_full = prevention.build_prevention_features(full_sorted).reindex(columns=_feature_cols, fill_value=0)
+    sample_idx = full_sorted.sample(n=8_000, random_state=ref_seed).index
+    X = X_full.loc[sample_idx]
+    truth = full_sorted.loc[sample_idx, "became_dispute"].values
     probs = _model.predict_proba(X)[:, 1]
-    truth = ref["became_dispute"].values
 
     n_pos = int(truth.sum())
     sorted_probs = np.sort(probs)[::-1]
     idx = min(int(n_pos * 0.5), len(sorted_probs) - 1)
-    threshold = float(sorted_probs[idx])
+    default_threshold = float(sorted_probs[idx])
+    return probs, truth, default_threshold
 
+
+def recall_precision_at(probs, truth, threshold):
     flagged = probs >= threshold
     tp = int(((flagged == 1) & (truth == 1)).sum())
     fp = int(((flagged == 1) & (truth == 0)).sum())
     fn = int(((flagged == 0) & (truth == 1)).sum())
-    ref_recall = tp / (tp + fn) if (tp + fn) else 0.0
-    ref_precision = tp / (tp + fp) if (tp + fp) else 0.0
-    return threshold, ref_recall, ref_precision
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    return recall, precision
 
 
 try:
@@ -94,7 +108,16 @@ except FileNotFoundError:
     st.error("Prevention model not found. Run `make train` first.")
     st.stop()
 
-threshold, ref_recall, ref_precision = compute_reference_threshold(prevention_model, prevention_cols)
+ref_probs, ref_truth, default_threshold = compute_reference_probs(prevention_model, prevention_cols)
+
+threshold = st.slider(
+    "Flagging threshold (risk score ≥)", min_value=0.05, max_value=0.95,
+    value=round(default_threshold, 2), step=0.01,
+    help="Lower it to catch more, at the cost of more false alarms -- this is a real "
+         "trade-off, not a free improvement. The default is calibrated fresh above "
+         "(not copied from anywhere), so 'catches more' is always honestly paid for.",
+)
+ref_recall, ref_precision = recall_precision_at(ref_probs, ref_truth, threshold)
 
 _OUTCOME_COLORS = {
     "✅ CAUGHT": "background-color: rgba(34,197,94,0.16)",
@@ -147,13 +170,19 @@ if run:
     CHUNK = 10
     for i, row in batch.iterrows():
         txn = {
+            "customer_id": row["customer_id"],
             "amount_inr": row["amount_inr"],
             "transaction_date": row["transaction_date"],
             "merchant_category": row["merchant_category"],
             "device_type": row["device_type"],
             "shipping_method": row["shipping_method"],
         }
-        scored = prevention.score_transaction(txn, prevention_model, prevention_cols)
+        # Pass the whole pool as candidate history -- score_transaction() itself
+        # filters to this customer's rows strictly before this transaction's
+        # date. Without this, every row would silently fall back to "unknown
+        # customer" global stats and the model's real improvement from
+        # customer-history features would never show up in this live demo.
+        scored = prevention.score_transaction(txn, prevention_model, prevention_cols, history_df=pool)
         risk_score = scored["dispute_risk_score"]
         truth = int(row["became_dispute"])
         flagged = risk_score >= threshold

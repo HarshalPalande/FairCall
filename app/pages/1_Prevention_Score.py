@@ -106,6 +106,9 @@ with col_out:
 st.divider()
 st.caption(
     "The prevention model uses ONLY features available at transaction time — "
-    "no evidence flags, no dispute information. Lower metrics than the outcome model "
-    "(see artifacts/prevention_metrics.json) are expected and honest, not a bug."
+    "no evidence flags, no information about THIS dispute (it hasn't happened yet). "
+    "It does use this customer's own PRIOR transaction history (their past dispute "
+    "rate) — that's genuinely known at payment time, not a leak. Lower metrics than "
+    "the outcome model (see artifacts/prevention_metrics.json) are expected and "
+    "honest, not a bug."
 )

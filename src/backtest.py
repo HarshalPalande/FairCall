@@ -101,19 +101,25 @@ def run_backtest(scored_df, human_contest_rate=0.70):
        would be measured from actual analyst behavior, not assumed.
     """
     total_disputes = len(scored_df)
+    labor = config.ANALYST_LABOR_COST_PER_CASE_INR
 
     accept_all_loss = -scored_df["amount_inr"].sum()
 
+    # Contest All requires a HUMAN to prepare every single evidence packet —
+    # there is no automation in this strategy, so every case bears analyst
+    # labor cost on top of the acquirer admin fee baked into CONTEST_COST_INR.
     contest_all_outcomes = np.where(
         scored_df["actual_won"] == 1,
-        scored_df["amount_inr"] - config.CONTEST_COST_INR,
-        -(scored_df["amount_inr"] + config.CONTEST_COST_INR),
+        scored_df["amount_inr"] - config.CONTEST_COST_INR - labor,
+        -(scored_df["amount_inr"] + config.CONTEST_COST_INR + labor),
     )
     contest_all_total = float(contest_all_outcomes.sum())
 
     auto = scored_df[scored_df["system_action"] == "AUTO_CONTEST"]
     escalate = scored_df[scored_df["system_action"] == "ESCALATE"]
 
+    # AUTO_CONTEST cases: the system prepares these automatically — no
+    # analyst labor cost, which is the entire point of automating them.
     auto_outcomes = np.where(
         auto["actual_won"] == 1,
         auto["amount_inr"] - config.CONTEST_COST_INR,
@@ -126,10 +132,11 @@ def run_backtest(scored_df, human_contest_rate=0.70):
     analyst_contested = escalate_sorted.iloc[:n_analyst_contests]
     analyst_accepted = escalate_sorted.iloc[n_analyst_contests:]
 
+    # Escalated cases a human decides to contest DO bear analyst labor.
     analyst_contest_outcomes = np.where(
         analyst_contested["actual_won"] == 1,
-        analyst_contested["amount_inr"] - config.CONTEST_COST_INR,
-        -(analyst_contested["amount_inr"] + config.CONTEST_COST_INR),
+        analyst_contested["amount_inr"] - config.CONTEST_COST_INR - labor,
+        -(analyst_contested["amount_inr"] + config.CONTEST_COST_INR + labor),
     )
     analyst_accepted_outcomes = -analyst_accepted["amount_inr"].values
 
@@ -138,6 +145,7 @@ def run_backtest(scored_df, human_contest_rate=0.70):
     return {
         "n_disputes": total_disputes,
         "human_contest_rate_assumption": human_contest_rate,
+        "analyst_labor_cost_per_case_inr": labor,
         "strategy_accept_all_inr": round(float(accept_all_loss), 2),
         "strategy_contest_all_inr": round(float(contest_all_total), 2),
         "strategy_system_inr": round(float(system_total), 2),
@@ -150,7 +158,10 @@ def run_backtest(scored_df, human_contest_rate=0.70):
         "system_escalated": len(escalate),
         "analyst_contested_from_escalated": n_analyst_contests,
         "analyst_accepted_from_escalated": len(analyst_accepted),
-        "note": "All figures computed against synthetic ground-truth. human_contest_rate is a stated assumption, not measured.",
+        "contest_all_total_labor_cost_inr": round(float(total_disputes * labor), 2),
+        "system_labor_cost_inr": round(float(n_analyst_contests * labor), 2),
+        "labor_savings_inr": round(float((total_disputes - n_analyst_contests) * labor), 2),
+        "note": "All figures computed against synthetic ground-truth. human_contest_rate and analyst_labor_cost_per_case_inr are stated assumptions, not measured.",
     }
 
 
@@ -182,7 +193,10 @@ def plot_backtest(backtest_results):
         )
 
     ax.set_ylabel("Net ₹ outcome (higher is better)")
-    ax.set_title(f"Backtest: {backtest_results['n_disputes']} disputes — 3 strategy comparison")
+    ax.set_title(
+        f"Backtest: {backtest_results['n_disputes']} disputes — 3 strategy comparison\n"
+        f"(includes ₹{config.ANALYST_LABOR_COST_PER_CASE_INR:.0f}/case analyst labor for manual contest prep)"
+    )
     ax.axhline(y=0, color="gray", linewidth=0.5, linestyle="--")
     fig.tight_layout()
     fig.savefig(config.ARTIFACTS_DIR / "backtest_comparison.png", dpi=150)

@@ -6,3 +6,5 @@ matplotlib==3.9.4
 shap==0.46.0
 streamlit==1.39.0
 pytest==8.3.3
+razorpay==1.4.2
+setuptools<81  # pinned: razorpay 1.4.2's SDK imports pkg_resources, removed in setuptools>=81

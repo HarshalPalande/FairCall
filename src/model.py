@@ -93,6 +93,28 @@ def train(seed=config.SEED, verbose=True):
 
     plot_reliability(y_test.values, calibrated_test_probs, raw_test_probs)
 
+    # --- SHAP feature importance: validates that evidence-completeness
+    # features actually dominate the model, which is what the rule-based
+    # Evidence Completeness Checker (src/evidence.py) is designed around. ---
+    if verbose:
+        print("Generating SHAP summary plot...")
+    import shap
+
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X_test)
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plt.figure()
+    shap.summary_plot(shap_values, X_test, show=False, max_display=15)
+    plt.tight_layout()
+    plt.savefig(config.ARTIFACTS_DIR / "shap_summary.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    if verbose:
+        print(f"SHAP summary plot saved to {config.ARTIFACTS_DIR / 'shap_summary.png'}")
+
     with open(config.MODELS_DIR / "detector.pkl", "wb") as f:
         pickle.dump(model, f)
     with open(config.MODELS_DIR / "calibrator.pkl", "wb") as f:

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pandas as pd
 import streamlit as st
 
-from src import config
+from src import config, vamp
 from src.audit import verify_chain
 from src.pipeline import load_artifacts, score_dispute
 
@@ -102,6 +102,21 @@ with col_output:
         st.write(f"EV(contest) = ₹{ev['ev_contest']:,.2f}    EV(accept) = ₹{ev['ev_accept']:,.2f}")
         for r in ev["reasons"]:
             st.write(f"- {r}")
+
+        vamp_status = vamp.compute_vamp_status()
+        marginal_vamp = vamp.marginal_vamp_cost(vamp_status)
+
+        st.markdown("**Portfolio (VAMP) cost**")
+        st.write(
+            f"This dispute adds ₹{marginal_vamp:,.2f} of VAMP portfolio risk. "
+            f"Current ratio: {vamp_status.current_ratio * 100:.3f}% "
+            f"(threshold {vamp_status.threshold * 100:.2f}%, "
+            f"{vamp_status.headroom_events:,} disputes of headroom)."
+        )
+        st.caption(
+            "Note: this cost applies whether the dispute is contested or accepted — the VAMP "
+            "ratio counts disputes filed, not lost. Only prevention avoids it. See the VAMP Risk page."
+        )
 
         if ecv["missing_documents"]:
             st.markdown("**Missing required evidence**")

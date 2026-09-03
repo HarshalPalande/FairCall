@@ -171,6 +171,8 @@ with col_raw:
 amount_inr = payment["amount"] / 100  # paise -> rupees
 method = payment.get("method", "card")
 notes = payment.get("notes", {})
+if not isinstance(notes, dict):
+    notes = {}
 
 device_map = {"upi": "mobile", "wallet": "mobile", "card": "desktop", "netbanking": "desktop", "emi": "desktop"}
 device_type = device_map.get(method, "mobile")

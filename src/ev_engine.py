@@ -29,7 +29,7 @@ being wrong scales too. That divergence is demo case #3 in the brief.
 from dataclasses import dataclass
 from enum import Enum
 
-from src import config
+from src import config, vamp
 
 
 class Action(str, Enum):
@@ -108,4 +108,109 @@ def decide(
         ceiling_blocked=ceiling_blocked,
         evidence_blocked=evidence_blocked,
         reasons=reasons,
+    )
+
+
+# ---------------------------------------------------------------------------
+# VAMP-aware EV — see src/vamp.py and README "VAMP Portfolio Risk"
+# ---------------------------------------------------------------------------
+#
+# The functions above price a dispute purely at its transaction amount. Under
+# VAMP (Visa Acquirer Monitoring Program), every FILED dispute also increments
+# a portfolio-level ratio that can trigger per-dispute penalties, reserve
+# requirements, or processing termination — regardless of whether the dispute
+# is won or lost. The functions below make that cost visible without changing
+# `decide()` or `EVDecision`, so every existing caller and test is unaffected.
+
+
+def ev_contest_vamp_aware(win_prob, amount, contest_cost=config.CONTEST_COST_INR, vamp_cost=None):
+    """
+    EV(contest) including VAMP portfolio cost.
+
+    The dispute has already been FILED at this point, so it already counts in
+    the VAMP ratio regardless of whether we contest or accept. That means
+    vamp_cost appears in BOTH branches and does not change the contest-vs-accept
+    comparison.
+
+    This is exactly the point: contesting cannot undo VAMP exposure. The only
+    decision that avoids it is PREVENTION, which happens before a dispute exists.
+    We surface it here so the number is visible in the decision, not hidden.
+    """
+    if vamp_cost is None:
+        vamp_cost = vamp.marginal_vamp_cost()
+    return amount * (2 * win_prob - 1) - contest_cost - vamp_cost
+
+
+def ev_accept_vamp_aware(amount, vamp_cost=None):
+    """EV(accept) including VAMP cost — see note in ev_contest_vamp_aware."""
+    if vamp_cost is None:
+        vamp_cost = vamp.marginal_vamp_cost()
+    return -amount - vamp_cost
+
+
+def ev_prevented(amount, prevention_cost=0.0):
+    """
+    EV of a dispute that never happened because evidence was collected proactively.
+
+    This is the branch the other two cannot reach: no transaction loss, no
+    contest cost, and critically NO VAMP RATIO IMPACT, because the dispute was
+    deflected pre-emptively rather than fought after filing.
+
+    prevention_cost is the cost of proactively gathering evidence (courier
+    confirmation requests, etc.) — small relative to a dispute.
+    """
+    return -prevention_cost
+
+
+@dataclass
+class VAMPAwareDecision:
+    action: Action
+    ev_contest: float
+    ev_accept: float
+    ev_contest_vamp_aware: float
+    ev_accept_vamp_aware: float
+    vamp_cost: float
+    win_prob: float
+    amount: float
+    reasons: list
+    vamp_note: str
+
+
+def decide_vamp_aware(
+    win_prob,
+    amount,
+    evidence_completeness,
+    contest_cost=config.CONTEST_COST_INR,
+    ceiling=config.HARD_CEILING_INR,
+    min_completeness=config.MIN_EVIDENCE_COMPLETENESS_FOR_AUTO,
+    vamp_cost=None,
+):
+    """
+    Same decision logic as decide(), but reports VAMP-aware EV figures alongside
+    the plain ones so the analyst can see the portfolio cost explicitly.
+
+    The ACTION is unchanged by VAMP (because VAMP cost applies to both branches
+    once a dispute is filed) — that is the honest finding, and we say so rather
+    than pretending VAMP changes the contest/accept call.
+    """
+    if vamp_cost is None:
+        vamp_cost = vamp.marginal_vamp_cost()
+
+    base = decide(win_prob, amount, evidence_completeness, contest_cost, ceiling, min_completeness)
+
+    return VAMPAwareDecision(
+        action=base.action,
+        ev_contest=base.ev_contest,
+        ev_accept=base.ev_accept,
+        ev_contest_vamp_aware=round(ev_contest_vamp_aware(win_prob, amount, contest_cost, vamp_cost), 2),
+        ev_accept_vamp_aware=round(ev_accept_vamp_aware(amount, vamp_cost), 2),
+        vamp_cost=round(vamp_cost, 2),
+        win_prob=win_prob,
+        amount=amount,
+        reasons=base.reasons,
+        vamp_note=(
+            f"This dispute adds ₹{vamp_cost:,.2f} of VAMP portfolio risk regardless "
+            f"of the contest outcome. Contesting cannot recover it — only preventing "
+            f"the dispute would have."
+        ),
     )

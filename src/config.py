@@ -75,3 +75,55 @@ ANALYST_LABOR_COST_PER_CASE_INR = 200.0
 
 TIME_COL = "dispute_date"
 LABEL_COL = "won"
+
+# --- VAMP (Visa Acquirer Monitoring Program) parameters -------------------
+# Effective 1 April 2026, the merchant "Excessive" VAMP threshold dropped from
+# 2.2% to 1.5% in US/Canada/EU/APAC/LATAM (CEMEA remains 2.2%).
+#
+# VAMP Ratio = (TC40 fraud reports + TC15 disputes) / settled CNP transactions
+#
+# KEY POINT (see README): this ratio counts disputes FILED, not disputes LOST.
+# Winning a representment does not remove the dispute from the ratio. Only
+# pre-dispute deflection (CE3.0 via Order Insight, RDR) keeps it off.
+VAMP_EXCESSIVE_THRESHOLD = 0.015          # 1.5% as of 1 April 2026
+VAMP_MONITORING_FLOOR_EVENTS = 1500       # min combined events/month to be monitored
+VAMP_PENALTY_PER_DISPUTE_USD = 8.0        # $8 per disputed/fraudulent txn at Excessive
+USD_TO_INR = 88.0                         # PLACEHOLDER FX rate — disclosed, not sourced
+VAMP_PENALTY_PER_DISPUTE_INR = VAMP_PENALTY_PER_DISPUTE_USD * USD_TO_INR
+
+# Simulated merchant portfolio context for the demo. In production these would
+# come from the merchant's actual settled-transaction and dispute counts.
+# PLACEHOLDER values, disclosed as such.
+MERCHANT_MONTHLY_SETTLED_TXNS = 200_000
+MERCHANT_MONTHLY_DISPUTE_EVENTS = 2_600   # ~1.30% — deliberately near the 1.5% line
+
+# --- Visa Compelling Evidence 3.0 (CE3.0) --------------------------------
+# CE3.0 applies to Visa reason code 10.4 (Fraud — Card Absent Environment).
+# It lets a merchant block a first-party fraud dispute by proving the cardholder
+# had a legitimate prior transaction history with them.
+#
+# NOTE ON SCOPE: the rest of this project is scoped to reason code 13.1.
+# CE3.0 is implemented here to show the rule-engine pattern extending to a
+# second reason code — it is NOT applicable to 13.1 disputes.
+CE3_REASON_CODE = "10.4"
+
+# Prior transactions must fall in this window relative to the disputed transaction.
+CE3_MIN_PRIOR_AGE_DAYS = 120
+CE3_MAX_PRIOR_AGE_DAYS = 365
+
+# Minimum number of prior undisputed transactions required.
+CE3_MIN_PRIOR_TRANSACTIONS = 2
+
+# Data elements that can be matched across transactions.
+CE3_MATCHABLE_ELEMENTS = [
+    "ip_address",
+    "device_id",
+    "account_login_id",
+    "shipping_address",
+]
+
+# At least one matched element MUST come from this set.
+CE3_ANCHOR_ELEMENTS = ["ip_address", "device_id"]
+
+# Minimum total number of matching elements.
+CE3_MIN_MATCHING_ELEMENTS = 2

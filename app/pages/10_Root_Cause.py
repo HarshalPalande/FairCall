@@ -65,6 +65,13 @@ display = seg.reset_index().rename(columns={
     "expected_loss_inr": "Expected loss ₹",
     "pct_of_total_loss": "% of total loss",
 })
+# Both of these are fractions (0-1). NumberColumn's "%.1f%%" format appends a
+# literal "%" WITHOUT multiplying by 100, so an unscaled 0.728 renders as
+# "0.7%" -- 100x low, and directly contradicting the correct prose right below
+# this table. Scale here, same as app/pages/7_RDR_Optimizer.py does for its
+# own "% volume" column.
+display["Win rate"] = display["Win rate"] * 100
+display["% of total loss"] = display["% of total loss"] * 100
 st.dataframe(
     display, hide_index=True, use_container_width=True,
     column_config={

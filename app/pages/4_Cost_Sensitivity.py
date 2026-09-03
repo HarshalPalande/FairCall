@@ -97,7 +97,14 @@ with col_results:
     fp_rate = len(new_fp) / len(new_auto) if len(new_auto) > 0 else 0
     fp_cost = (new_fp["amount_inr"] + contest_cost).sum()
     tp_value = (new_tp["amount_inr"] - contest_cost).sum()
-    net_auto = tp_value - fp_cost
+
+    # Every escalated case still costs an analyst's time to review, whether or not
+    # they end up contesting it -- this is what makes the slider's own claim below
+    # ("a merchant with expensive analyst labor benefits from a higher auto-contest
+    # rate") actually true of the numbers on screen, instead of the slider being
+    # read but never used by anything displayed.
+    escalation_review_cost = analyst_labor * len(new_escalate)
+    net_auto = tp_value - fp_cost - escalation_review_cost
 
     m1, m2 = st.columns(2)
     m1.metric("Auto-contest rate", f"{auto_rate:.0%}")
@@ -108,7 +115,8 @@ with col_results:
     m4.metric("False positive cost", f"₹{fp_cost:,.0f}")
 
     m5, m6 = st.columns(2)
-    m5.metric("Net value (auto decisions)", f"₹{net_auto:,.0f}")
+    m5.metric("Net value (after escalation labor)", f"₹{net_auto:,.0f}",
+              f"-₹{escalation_review_cost:,.0f} analyst review cost")
     m6.metric("Cases needing analyst", f"{len(new_escalate)}")
 
     st.markdown("---")

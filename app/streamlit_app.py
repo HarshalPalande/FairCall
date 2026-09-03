@@ -101,7 +101,8 @@ col_input, col_output = st.columns([1, 1.4])
 
 with col_input:
     st.subheader("Dispute")
-    amount = st.number_input("Amount (₹)", min_value=100.0, max_value=200_000.0, value=5_000.0, step=100.0)
+    amount = st.number_input("Amount (₹)", min_value=100.0, max_value=200_000.0, value=5_000.0, step=100.0,
+                              format="%.0f")  # avoids a locale-dependent decimal separator (e.g. "5000,00")
     late_filing = st.checkbox("Filed late (>30 days after transaction)", value=False)
     account_age = st.slider("Customer account age at dispute (days)", 0, 700, 120)
     merchant_category = st.selectbox(
@@ -194,15 +195,28 @@ with col_output:
 
         rows = []
         for opt in four_way.options:
+            is_chosen = opt.action == four_way.chosen
             rows.append({
-                "Action": opt.action.value,
+                "Action": f"{opt.action.value} ◀ CHOSEN" if is_chosen else opt.action.value,
                 "EV (₹)": (f"{opt.expected_value_inr:,.0f}" if opt.ev_comparable
                            else f"({opt.expected_value_inr:,.0f} if accepted)"),
                 "VAMP cost (₹)": f"{opt.vamp_cost_inr:,.0f}",
+                # "Viable" is NOT the same thing as "chosen" -- it means "not blocked by
+                # the ceiling/evidence gate." ESCALATE is always viable by design (it's
+                # the fallback), so every row reading ✅ here is expected, not a bug.
                 "Viable": "✅" if opt.viable else "❌",
                 "Why": opt.blocked_reason or opt.rationale,
             })
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        four_way_df = pd.DataFrame(rows)
+        chosen_idx = next(i for i, o in enumerate(four_way.options) if o.action == four_way.chosen)
+
+        def _highlight_chosen(row):
+            return ["background-color: rgba(34,197,94,0.16)"] * len(row) if row.name == chosen_idx else [""] * len(row)
+
+        st.dataframe(
+            four_way_df.style.apply(_highlight_chosen, axis=1),
+            hide_index=True, use_container_width=True,
+        )
 
         if four_way.chosen == decision_engine.DecisionAction.ESCALATE:
             st.warning(f"**Chosen: `{four_way.chosen.value}`** — no automated action permitted.")

@@ -96,6 +96,22 @@ except FileNotFoundError:
 
 threshold, ref_recall, ref_precision = compute_reference_threshold(prevention_model, prevention_cols)
 
+_OUTCOME_COLORS = {
+    "✅ CAUGHT": "background-color: rgba(34,197,94,0.16)",
+    "❌ MISSED": "background-color: rgba(239,68,68,0.16)",
+    "⚠️ FALSE ALARM": "background-color: rgba(234,179,8,0.18)",
+    "· cleared": "",
+}
+
+
+def _style_outcome(df):
+    """Tint each row by its Outcome so the live table reads at a glance, not just
+    from the text label -- green catches, red misses, amber false alarms."""
+    def _row_style(row):
+        style = _OUTCOME_COLORS.get(row.get("Outcome", ""), "")
+        return [style] * len(row)
+    return df.style.apply(_row_style, axis=1)
+
 st.info(
     f"**Reference point, computed live** on a fresh 8,000-transaction pool (not the "
     f"README's numbers — those use a threshold tied to one specific old test set; "
@@ -170,6 +186,26 @@ if run:
         difficulty_val = (1 - margin_norm) / 2
         difficulty = "Easy" if difficulty_val < 0.3 else ("Moderate" if difficulty_val < 0.6 else "Extreme")
 
+        # Honest, quantitative "why" -- not a fabricated causal claim. It states the gap to
+        # the threshold and the transaction-time features the model actually saw, and ties
+        # a miss back to the same "less signal at payment time" limitation already disclosed
+        # on the Prevention Score page, rather than inventing a specific cause per case.
+        gap = abs(risk_score - threshold)
+        txn_desc = (f"₹{row['amount_inr']:,.0f} {row['merchant_category']} via "
+                    f"{row['device_type']}, {row['shipping_method']} shipping")
+        if outcome == "❌ MISSED":
+            reason = (f"Scored {risk_score:.2f}, {gap:.2f} below the {threshold:.2f} threshold. "
+                      f"{txn_desc} — nothing in the transaction-time features flagged this one; "
+                      f"the evidence that would have (delivery/tracking history) doesn't exist yet "
+                      f"at payment time.")
+        elif outcome == "⚠️ FALSE ALARM":
+            reason = (f"Scored {risk_score:.2f}, {gap:.2f} above the {threshold:.2f} threshold, but "
+                      f"turned out clean. {txn_desc} — looked risky on transaction-time features alone.")
+        elif outcome == "✅ CAUGHT":
+            reason = f"Scored {risk_score:.2f}, {gap:.2f} above the {threshold:.2f} threshold — correctly flagged. {txn_desc}."
+        else:
+            reason = f"Scored {risk_score:.2f}, {gap:.2f} below the {threshold:.2f} threshold — correctly cleared."
+
         results.append({
             "Agent": row["agent_id"],
             "Amount ₹": f"{row['amount_inr']:,.0f}",
@@ -179,11 +215,13 @@ if run:
             "Actually risky?": "Yes" if truth == 1 else "No",
             "Outcome": outcome,
             "Difficulty": difficulty,
+            "Reason": reason,
         })
 
         if (i + 1) % CHUNK == 0 or i == len(batch) - 1:
             progress.progress((i + 1) / len(batch), text=f"Agents submitting payments... {i + 1}/100")
-            live_table.dataframe(pd.DataFrame(results[-CHUNK:]), hide_index=True, use_container_width=True)
+            chunk_df = pd.DataFrame(results[-CHUNK:]).drop(columns=["Reason"])
+            live_table.dataframe(_style_outcome(chunk_df), hide_index=True, use_container_width=True)
             with live_metrics.container():
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Caught", tp)
@@ -238,8 +276,25 @@ if run:
         "not a bug."
     )
 
+    caught_df = df_results[df_results["Outcome"] == "✅ CAUGHT"]
+    missed_df = df_results[df_results["Outcome"] == "❌ MISSED"]
+    display_cols = ["Agent", "Amount ₹", "Category", "Risk score", "Difficulty", "Reason"]
+
+    with st.expander(f"✅ Caught ({len(caught_df)})"):
+        if len(caught_df):
+            st.dataframe(caught_df[display_cols], hide_index=True, use_container_width=True)
+        else:
+            st.caption("Nothing caught this batch.")
+
+    with st.expander(f"❌ Missed ({len(missed_df)}) — with the reason for each"):
+        if len(missed_df):
+            st.dataframe(missed_df[display_cols], hide_index=True, use_container_width=True)
+        else:
+            st.caption("Nothing missed this batch.")
+
     with st.expander("Full batch (all 100)"):
-        st.dataframe(df_results, hide_index=True, use_container_width=True)
+        st.dataframe(_style_outcome(df_results.drop(columns=["Reason"])), hide_index=True, use_container_width=True)
+        st.caption("Reason for each Caught/Missed/False alarm case is in the expanders above.")
 
 st.markdown("---")
 st.caption(

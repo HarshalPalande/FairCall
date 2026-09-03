@@ -37,8 +37,12 @@ with col_dispute:
     st.subheader("This dispute")
     amount = st.number_input(
         "Amount (₹)", min_value=100.0, max_value=200_000.0,
-        value=3_100.0, step=100.0,  # whole-rupee default -- a fractional default renders
-        # with a locale-dependent decimal separator (e.g. "3101,81") on some browsers
+        value=3_100.0, step=100.0,
+        # A float-valued number_input renders with a locale-dependent decimal
+        # separator regardless of whether the value itself is a whole number
+        # (confirmed live: "3100,00", not just "3101,81"). format="%.0f" forces
+        # plain integer-style display, sidestepping the browser/locale formatting.
+        format="%.0f",
     )
     win_prob_pct = st.slider(
         "Win probability at representment (%)",

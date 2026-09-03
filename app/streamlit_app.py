@@ -1,272 +1,135 @@
 """
-Analyst UI — one screen: dispute in, prediction + EV math + missing
-evidence + recommendation out. Run with:
+Navigation router + custom sidebar.
 
-    streamlit run app/streamlit_app.py
+Two constraints shape the odd-looking structure here:
 
-Calls the exact same src.pipeline.score_dispute() used by scripts/demo.py
-and the test suite — there is one scoring code path, not a UI-specific copy.
+1. `st.navigation`'s built-in sections render as flat headers — they can't
+   collapse. So the built-in nav is hidden (`position="hidden"`) and the
+   sidebar is rebuilt from real components: `st.page_link` for each entry and
+   `st.expander` for the collapsible "Advanced" group (the expander is what
+   provides the chevron and the actual open/close behaviour).
+
+2. The nav is rendered AFTER `pg.run()`, which looks backwards but isn't.
+   Every page file calls its own `st.set_page_config()`, and Streamlit allows
+   exactly one per run, which must precede any delta. Drawing the sidebar
+   first would emit deltas and break `set_page_config` on all ten pages.
+   Running the page first, then adding sidebar content, satisfies the guard —
+   and because this is the sidebar, call order doesn't affect where it lands.
+   (Verified no page writes to the sidebar itself, so nothing competes.)
+
+`st.navigation` itself is safe to call before `pg.run()`: it enqueues a
+`navigation` ForwardMsg, not a delta, so it doesn't consume the
+one-set_page_config-per-run budget.
 """
-import json
-import re
-import subprocess
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import pandas as pd
 import streamlit as st
 
-from src import config, decision_engine, vamp
-from src.audit import verify_chain
-from src.pipeline import load_artifacts, score_dispute
-
-st.set_page_config(page_title="AI Risk Manager — Dispute Copilot", layout="wide")
-
-
-@st.cache_resource
-def get_artifacts():
-    return load_artifacts()
-
-
-st.title("AI Risk Manager — Chargeback Evidence Copilot")
-st.caption(
-    f"Scoped to Visa reason code {config.REASON_CODE} (\"Merchandise / Services Not Received\") only. "
-    "Trained and evaluated on synthetic data — see README for why."
+# --- what a first-time viewer should see first ----------------------------
+demo_mode = st.Page(
+    "pages/9_Demo_Mode.py", title="Demo Mode", url_path="Demo_Mode", default=True,
+)
+root_cause = st.Page(
+    "pages/10_Root_Cause.py", title="Root Cause", url_path="Root_Cause",
 )
 
-try:
-    model, calibrator, feature_cols, history_df = get_artifacts()
-except FileNotFoundError:
-    st.error("No trained model found. Run `make train` (or `python -m src.model`) first.")
-    st.stop()
-
-
-def _load_json(path):
-    try:
-        return json.loads(Path(path).read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
-
-
-@st.cache_data(show_spinner=False)
-def _count_tests():
-    """Ask pytest's own collector, not a source-line regex -- parametrized tests
-    (e.g. test_decision_engine.py's 27-case sweep) turn one `def test_` into many
-    collected tests, so counting `def` lines would undercount against `make test`."""
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-m", "pytest", str(config.ROOT / "tests"), "--collect-only", "-q"],
-            cwd=config.ROOT, capture_output=True, text=True, timeout=30,
-        )
-        m = re.search(r"(\d+) tests? collected", proc.stdout)
-        return int(m.group(1)) if m else None
-    except Exception:
-        return None
-
-
-_metrics = _load_json(config.ARTIFACTS_DIR / "metrics.json")
-_backtest = _load_json(config.ARTIFACTS_DIR / "backtest_results.json")
-_vamp_status = vamp.compute_vamp_status()
-_test_count = _count_tests()
-
-st.markdown("#### At a glance")
-h1, h2, h3, h4 = st.columns(4)
-if _backtest:
-    sys_inr = _backtest["backtest"]["strategy_system_inr"]
-    savings = _backtest["backtest"]["savings_vs_contest_all_inr"]
-    h1.metric("Net value (this system)", f"₹{sys_inr:,.0f}",
-              f"+₹{savings:,.0f} vs. contest-everything")
-    fp = _backtest["false_positive_analysis"]
-    h2.metric("Honest false-positive rate", f"{fp['false_positive_rate']:.1%}",
-              f"₹{fp['false_positive_cost_inr']:,.0f} disclosed cost", delta_color="inverse")
-else:
-    h1.metric("Net value (this system)", "run `make backtest`")
-    h2.metric("Honest false-positive rate", "run `make backtest`")
-h3.metric("VAMP ratio", f"{_vamp_status.current_ratio * 100:.2f}%",
-          f"{_vamp_status.headroom_events:,} disputes of headroom")
-if _test_count is not None:
-    h4.metric("Tests passing", f"{_test_count}", "collected live via pytest")
-else:
-    h4.metric("Tests passing", "run `make test`")
-st.caption(
-    "Every number above is read live from `artifacts/*.json` (written by `make backtest`) "
-    "or computed on this page load — nothing here is typed in. Scoped to Visa reason code "
-    f"{config.REASON_CODE}, synthetic data throughout (see README)."
+# --- everything else ------------------------------------------------------
+dispute_copilot = st.Page(
+    "pages/0_Dispute_Copilot.py", title="Dispute Copilot", url_path="Dispute_Copilot",
 )
-st.markdown("---")
+four_way = st.Page(
+    "pages/8_Four_Way_Simulator.py", title="Four-Way Simulator", url_path="Four_Way_Simulator",
+)
+prevention = st.Page(
+    "pages/1_Prevention_Score.py", title="Prevention Score", url_path="Prevention_Score",
+)
+review_queue = st.Page(
+    "pages/2_Review_Queue.py", title="Review Queue", url_path="Review_Queue",
+)
+rdr = st.Page(
+    "pages/7_RDR_Optimizer.py", title="RDR Optimizer", url_path="RDR_Optimizer",
+)
+vamp = st.Page(
+    "pages/5_VAMP_Risk.py", title="VAMP Risk", url_path="VAMP_Risk",
+)
+ce3 = st.Page(
+    "pages/6_CE3_Qualification.py", title="CE3.0 Qualification", url_path="CE3_Qualification",
+)
+cost = st.Page(
+    "pages/4_Cost_Sensitivity.py", title="Cost Sensitivity", url_path="Cost_Sensitivity",
+)
+razorpay = st.Page(
+    "pages/3_Razorpay_Integration.py", title="Razorpay Integration", url_path="Razorpay_Integration",
+)
 
-col_input, col_output = st.columns([1, 1.4])
+PRIMARY = [demo_mode, root_cause]
+ADVANCED = [
+    dispute_copilot, four_way, prevention, review_queue,
+    rdr, vamp, ce3, cost, razorpay,
+]
 
-with col_input:
-    st.subheader("Dispute")
-    amount = st.number_input("Amount (₹)", min_value=100.0, max_value=200_000.0, value=5_000.0, step=100.0,
-                              format="%.0f")  # avoids a locale-dependent decimal separator (e.g. "5000,00")
-    late_filing = st.checkbox("Filed late (>30 days after transaction)", value=False)
-    account_age = st.slider("Customer account age at dispute (days)", 0, 700, 120)
-    merchant_category = st.selectbox(
-        "Merchant category", ["electronics", "fashion", "grocery", "home", "beauty", "digital_goods"]
-    )
-    device_type = st.selectbox("Device type", ["mobile", "desktop", "app"])
-    shipping_method = st.selectbox("Shipping method", ["standard", "express", "digital_delivery"])
+pg = st.navigation(PRIMARY + ADVANCED, position="hidden")
+pg.run()
 
-    st.markdown("**Evidence on file**")
-    evidence_inputs = {}
-    for etype in config.EVIDENCE_TYPES:
-        default = etype not in ("signed_pod",)
-        evidence_inputs[f"has_{etype}"] = int(
-            st.checkbox(etype.replace("_", " ").title(), value=default, key=etype)
-        )
+# --- sidebar, drawn after the page for the set_page_config reason above ----
+SIDEBAR_CSS = """
+<style>
+/* Font is deliberately NOT set anywhere here — everything inherits the app's
+   existing typography. Only spacing, colour and layout are touched. */
 
-    customer_id = st.selectbox(
-        "Customer (for prior-history features — demo uses real synthetic customers)",
-        sorted(history_df["customer_id"].unique())[:200],
-    )
+section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] {
+    padding: 6px 12px;
+    border-radius: 8px;
+    margin: 1px 0;
+}
+section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"] p {
+    font-size: 0.92rem;
+    margin: 0;
+}
+section[data-testid="stSidebar"] [data-testid="stPageLink-NavLink"]:hover {
+    background: rgba(120, 120, 120, 0.10);
+}
 
-    run = st.button("Score dispute", type="primary")
+/* "Advanced" group: strip the expander's card chrome so it reads as a nav
+   section rather than a boxed widget. */
+section[data-testid="stSidebar"] [data-testid="stExpander"] details {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    padding: 6px 12px !important;
+    border-radius: 8px;
+    font-weight: 600;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: rgba(120, 120, 120, 0.10);
+}
 
-with col_output:
-    st.subheader("Result")
-    if run:
-        case = {
-            "transaction_id": "UI-CASE",
-            "customer_id": customer_id,
-            "amount_inr": amount,
-            "merchant_category": merchant_category,
-            "device_type": device_type,
-            "shipping_method": shipping_method,
-            "late_filing": int(late_filing),
-            "account_age_days_at_dispute": account_age,
-            **evidence_inputs,
-        }
-        result = score_dispute(case, model, calibrator, feature_cols, history_df)
-        ev = result["ev_decision"]
-        ecv = result["evidence"]
+/* Children: indented and hung off a vertical connector line, matching the
+   tree look — muted until hovered or active. */
+section[data-testid="stSidebar"] [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+    padding-left: 0 !important;
+    margin-left: 20px;
+    border-left: 1px solid rgba(130, 130, 130, 0.28);
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"]
+    [data-testid="stPageLink-NavLink"] {
+    margin-left: 6px;
+    opacity: 0.72;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"]
+    [data-testid="stPageLink-NavLink"]:hover {
+    opacity: 1;
+}
+</style>
+"""
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Win probability", f"{result['win_probability']:.0%}")
-        m2.metric("Evidence completeness", f"{ecv['completeness_score']:.0%}")
-        m3.metric(
-            "Decision",
-            ev["action"].value if hasattr(ev["action"], "value") else str(ev["action"]).split(".")[-1],
-        )
-
-        if ev["ceiling_blocked"]:
-            st.warning(f"Blocked by hard ₹ ceiling (₹{config.HARD_CEILING_INR:,.0f}) — always escalates, regardless of confidence.")
-        if ev["evidence_blocked"]:
-            st.warning(f"Blocked by minimum evidence completeness ({config.MIN_EVIDENCE_COMPLETENESS_FOR_AUTO:.0%}).")
-
-        st.markdown("**EV math**")
-        st.write(f"EV(contest) = ₹{ev['ev_contest']:,.2f}    EV(accept) = ₹{ev['ev_accept']:,.2f}")
-        for r in ev["reasons"]:
-            st.write(f"- {r}")
-
-        vamp_status = vamp.compute_vamp_status()
-        marginal_vamp = vamp.marginal_vamp_cost(vamp_status)
-
-        st.markdown("**Portfolio (VAMP) cost**")
-        st.write(
-            f"This dispute adds ₹{marginal_vamp:,.2f} of VAMP portfolio risk. "
-            f"Current ratio: {vamp_status.current_ratio * 100:.3f}% "
-            f"(threshold {vamp_status.threshold * 100:.2f}%, "
-            f"{vamp_status.headroom_events:,} disputes of headroom)."
-        )
-        st.caption(
-            "Note: this cost applies whether the dispute is contested or accepted — the VAMP "
-            "ratio counts disputes filed, not lost. Only prevention avoids it. See the VAMP Risk page."
-        )
-
-        st.markdown("---")
-        st.markdown("**Four-way decision comparison**")
-        st.caption(
-            "The original engine chooses contest vs. escalate. Visa's pre-dispute "
-            "infrastructure offers more levers, and they differ in VAMP consequence. "
-            "ESCALATE is not EV-scored — it is what happens when no automated action "
-            "is permitted."
-        )
-
-        four_way = decision_engine.decide_four_way(
-            win_prob=result["win_probability"],
-            amount=amount,
-            evidence_completeness=ecv["completeness_score"],
-            reason_code=config.REASON_CODE,
-        )
-
-        rows = []
-        for opt in four_way.options:
-            is_chosen = opt.action == four_way.chosen
-            rows.append({
-                "Action": f"{opt.action.value} ◀ CHOSEN" if is_chosen else opt.action.value,
-                "EV (₹)": (f"{opt.expected_value_inr:,.0f}" if opt.ev_comparable
-                           else f"({opt.expected_value_inr:,.0f} if accepted)"),
-                "VAMP cost (₹)": f"{opt.vamp_cost_inr:,.0f}",
-                # "Viable" is NOT the same thing as "chosen" -- it means "not blocked by
-                # the ceiling/evidence gate." ESCALATE is always viable by design (it's
-                # the fallback), so every row reading ✅ here is expected, not a bug.
-                "Viable": "✅" if opt.viable else "❌",
-                "Why": opt.blocked_reason or opt.rationale,
-            })
-        four_way_df = pd.DataFrame(rows)
-        chosen_idx = next(i for i, o in enumerate(four_way.options) if o.action == four_way.chosen)
-
-        def _highlight_chosen(row):
-            return ["background-color: rgba(34,197,94,0.16)"] * len(row) if row.name == chosen_idx else [""] * len(row)
-
-        st.dataframe(
-            four_way_df.style.apply(_highlight_chosen, axis=1),
-            hide_index=True, use_container_width=True,
-        )
-
-        if four_way.chosen == decision_engine.DecisionAction.ESCALATE:
-            st.warning(f"**Chosen: `{four_way.chosen.value}`** — no automated action permitted.")
-        else:
-            st.success(f"**Chosen: `{four_way.chosen.value}`**")
-        for r in four_way.reasons:
-            st.write(f"- {r}")
-
-        if ecv["missing_documents"]:
-            st.markdown("**Missing required evidence**")
-            st.write(", ".join(ecv["missing_documents"]))
-        if ecv["consistency_notes"]:
-            st.markdown("**Consistency warnings**")
-            for n in ecv["consistency_notes"]:
-                st.write(f"⚠️ {n}")
-
-        if result["counterfactuals"]:
-            st.markdown("**What evidence would help most? (counterfactual re-scoring)**")
-            cf_df = pd.DataFrame(result["counterfactuals"])
-            cf_df["baseline_prob"] = (cf_df["baseline_prob"] * 100).round(1)
-            cf_df["what_if_prob"] = (cf_df["what_if_prob"] * 100).round(1)
-            cf_df["delta_pp"] = (cf_df["delta"] * 100).round(1)
-            st.dataframe(
-                cf_df[["evidence_type", "baseline_prob", "what_if_prob", "delta_pp"]].rename(
-                    columns={
-                        "evidence_type": "Evidence type",
-                        "baseline_prob": "Current win %",
-                        "what_if_prob": "If added win %",
-                        "delta_pp": "Δ (pp)",
-                    }
-                ),
-                hide_index=True,
-                use_container_width=True,
-            )
-            top = result["counterfactuals"][0]
-            st.info(
-                f"Recommendation: gather **{top['evidence_type'].replace('_', ' ')}** before contesting — "
-                f"raises win probability from {top['baseline_prob']:.0%} to {top['what_if_prob']:.0%}."
-            )
-
-        ok, msg = verify_chain()
-        st.caption(f"Audit log chain check: {'✅ OK' if ok else '❌ FAILED'} — {msg}")
-    else:
-        st.write("Fill in the dispute on the left and click **Score dispute**.")
-
-st.divider()
-with st.expander("Defense-only enforcement (what this system will NOT do)"):
-    st.markdown(
-        "- Never auto-submits evidence without a human review gate (out of scope for this demo build — see README).\n"
-        "- Never contacts the disputing customer.\n"
-        "- Hard ₹ ceiling cannot be bypassed by model confidence.\n"
-        "- Every scored decision is written to an append-only, hash-chained audit log."
-    )
+with st.sidebar:
+    st.markdown(SIDEBAR_CSS, unsafe_allow_html=True)
+    for page in PRIMARY:
+        st.page_link(page)
+    # Open by default on every load — the chevron still closes it for the
+    # current view. Streamlit expanders reset to this default on each rerun,
+    # so navigating to another page reopens it, which is the intent here.
+    with st.expander("Advanced", expanded=True):
+        for page in ADVANCED:
+            st.page_link(page)

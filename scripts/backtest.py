@@ -40,6 +40,10 @@ def main():
     print(f"Savings vs contest:   ₹{bt['savings_vs_contest_all_inr']:>12,.2f}")
     print(f"False positive rate:  {fp['false_positive_rate']:.1%}")
     print(f"False positive cost:  ₹{fp['false_positive_cost_inr']:>12,.2f}")
+    print(
+        f"Labor savings:        ₹{bt['labor_savings_inr']:>12,.2f} "
+        f"({bt['n_disputes'] - bt['analyst_contested_from_escalated']} cases automated)"
+    )
     print(f"{'=' * 60}")
 
     plot_backtest(bt)

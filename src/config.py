@@ -60,5 +60,18 @@ HARD_CEILING_INR = 25_000.0
 # this, the case escalates regardless of predicted win probability.
 MIN_EVIDENCE_COMPLETENESS_FOR_AUTO = 0.6
 
+# Additional cost for a HUMAN analyst to manually prepare and submit a
+# contest evidence packet: reviewing the dispute, gathering documents,
+# writing the response, submitting through the acquirer portal. This is on
+# top of CONTEST_COST_INR (which already covers the acquirer admin fee and
+# a baseline packet-assembly cost) — it's the extra cost specific to a human
+# doing that assembly by hand instead of the system doing it automatically
+# for an AUTO_CONTEST case. Used by the backtest (src/backtest.py) to give
+# "contest everything blindly" its real, non-zero labor cost instead of
+# implicitly assuming evidence packets prepare themselves for free.
+# PLACEHOLDER — same caveat as the rest of this cost table: in production,
+# sourced from ops team time-tracking data, not invented by an engineer.
+ANALYST_LABOR_COST_PER_CASE_INR = 200.0
+
 TIME_COL = "dispute_date"
 LABEL_COL = "won"

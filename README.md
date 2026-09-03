@@ -48,8 +48,8 @@ not as a benchmarked fraud/dispute model.
 make install    # creates .venv, installs pinned requirements.txt
 make demo       # generates data, trains, calibrates, runs the 3 hero cases
 make backtest   # false-positive cost analysis + 3-strategy ₹ backtest
-make test       # 8 unit tests on the EV Decision Engine
-make app        # Streamlit analyst UI at localhost:8501 (3 pages)
+make test       # 25 unit tests across the EV engine, evidence checker, prevention model, and backtest
+make app        # Streamlit analyst UI at localhost:8501 (5 pages)
 ```
 
 `make demo` and `make backtest` reproduce every number in this README from a cold clone.
@@ -57,21 +57,33 @@ make app        # Streamlit analyst UI at localhost:8501 (3 pages)
 ## Architecture
 
 ```
+Razorpay payment.captured webhook
+    |
+    v
 Transaction --> Dispute Prevention Score (XGBoost, txn-time features only)
-                  |-- HIGH/MEDIUM risk --> "collect evidence now" recommendation
+                  |-- HIGH/MEDIUM risk --> "collect evidence now" alert to merchant
                   |-- LOW risk         --> standard monitoring
 
+Razorpay payment.dispute.created webhook
+    |
+    v
 Dispute --> Feature Store (UID aggregates, causal/past-only)
         --> XGBoost Detector --> Isotonic Calibrator
         --> Evidence Completeness Checker (rule-based, standalone)
         --> Counterfactual Engine (what evidence would help most?)
-        --> EV Decision Engine (EV math + hard ₹ ceiling + evidence gate)
+        --> EV Decision Engine (configurable cost table + hard ₹ ceiling + evidence gate)
               |-- AUTO_CONTEST --> (future work: LLM draft, human-reviewed)
               |-- ESCALATE     --> Human Review Queue, ranked by EV(contest)
         --> Audit Trail (hash-chained, append-only)
+        --> SHAP Explainability (validates feature importance, see below)
 ```
 
-See `buildathon.md` for the original full-scope design (grounded LLM, SHAP, merchant
+`app/pages/3_Razorpay_Integration.py` demonstrates the webhook mapping above end to
+end against real Razorpay payment-object shapes (sample data by default, live Test
+Mode API if `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` are set) — see the dedicated
+section below.
+
+See `buildathon.md` for the original full-scope design (grounded LLM, merchant
 intelligence hub, etc.) — that document is the north star; this repo is the
 deliberately-cut subset of it that's actually built and tested.
 
@@ -141,32 +153,31 @@ above. Regenerate with `make backtest`.
 blindly contesting every dispute, and (3) this system (EV-based auto-contest, with
 escalated cases going to a simulated human analyst who contests the strongest
 `human_contest_rate` = 70% of them, by win probability, and accepts the rest outright).
-**That 70% figure is a stated assumption, not a measurement** — in production it would
-be measured from actual analyst behavior, and the backtest is disclosed as sensitive to it.
+**That 70% figure, and the ₹200/case analyst labor cost below, are stated assumptions,
+not measurements** — in production both would be measured from actual analyst
+behavior and ops time-tracking, and the backtest is disclosed as sensitive to them.
+
+An earlier version of this backtest priced "Contest All" as if evidence packets
+assemble themselves for free — it doesn't. Preparing a contest response takes a human's
+time even when the system doesn't need one (an `AUTO_CONTEST` case genuinely doesn't;
+a human blindly contesting every dispute does). `ANALYST_LABOR_COST_PER_CASE_INR` = ₹200
+is now charged per case to any strategy that requires manual packet prep — that's
+"Contest All" on every case, and "This System" only on the escalated cases a human
+analyst decides to actually contest:
 
 | Strategy | Net ₹ outcome |
 |---|---|
 | Accept all (no contest) | −₹6,683,196.06 |
-| Contest all (no intelligence) | +₹1,373,874.16 |
-| This system (EV-based) | +₹1,269,647.50 |
+| Contest all (no intelligence, ₹200/case labor on all 3,000 cases) | +₹773,874.16 |
+| This system (EV-based, ₹200/case labor on 919 analyst-contested cases only) | +₹1,085,847.50 |
 
-**The number we're not going to hide:** this system comes out ₹104,226.66 *worse* than
-blindly contesting every single dispute, on this backtest. That's a real result, and
-presenting only the flattering "+119% vs. accept-all" comparison and omitting it would
-break the honesty standard the rest of this README holds itself to.
-
-**Why, and why it's still the right design:** the synthetic win rate here is high
-(71.6% of all disputes are winnable if contested), so "contest everything" is already a
-strong baseline in this world — there's little room for a smarter policy to add raw ₹
-on top of it. What this system is actually optimizing for is not raw EV maximization; it's
-*bounded, auditable automation*: only 56% of cases are ever auto-acted on without a
-human in the loop, the hard ₹25,000 ceiling caps single-decision blast radius regardless
-of confidence, and every escalated case is a place a human can catch something the model
-can't. Blind contest-all has none of that — it has no way to flag the ₹42,000
-borderline case from the demo, no audit trail, and no mechanism to stop automatically
-contesting once evidence quality degrades. The ₹104k gap is the visible price of that
-governance in this backtest; whether it's worth paying is a real business tradeoff, not
-a number we're trying to make disappear. Regenerate with `make backtest`; chart at
+With labor priced honestly, this system now beats blind Contest-All by **₹311,973.34**,
+not because of smarter EV math on the auto-handled cases (that mechanism is unchanged
+from before), but because **56% of cases (1,687 of 3,000) are auto-resolved with zero
+analyst time** — ₹416,200 of labor that Contest-All would have spent regardless of
+whether a human's judgment was actually needed. That's the real, disclosed source of
+the value: not better win-rate prediction, but not paying a human to do what didn't
+need a human. Regenerate with `make backtest`; chart at
 `artifacts/backtest_comparison.png`.
 
 ## Dispute Prevention Score — proactive risk flagging
@@ -201,6 +212,62 @@ a coin flip. We caught that before writing it up, because presenting noise as "t
 innovation" would have failed the same bar as everything else in this README.
 Regenerate via `make train`; category-risk chart at
 `artifacts/prevention_category_risk.png`.
+
+## SHAP feature importance
+
+`src/model.py` runs `shap.TreeExplainer` over the held-out test slice at the end of
+training and saves a summary plot to `artifacts/shap_summary.png`. The honest result,
+by mean |SHAP value|: **`cust_prior_win_rate` (a customer-trustworthiness proxy) is the
+single strongest individual feature**, with the three required reason-code-13.1
+evidence flags (`has_delivery_confirmation`, `has_tracking_number`, `has_signed_pod`)
+clustered immediately behind it — ranked #2, #3, #4 out of the full feature set.
+
+We're stating it this way rather than claiming evidence "dominates" outright, because
+it doesn't dominate as a single top feature — customer history does, in this synthetic
+world. What SHAP does validate is that the three evidence flags the rule-based
+Evidence Completeness Checker (`src/evidence.py`) already treats as required for
+reason code 13.1 are, independently, among the model's most influential inputs — the
+rule-based checker's design and the model's learned behavior agree on what matters,
+which is the useful confirmation here, not a claim that evidence is the *only* thing
+that matters.
+
+## Razorpay integration
+
+`app/pages/3_Razorpay_Integration.py` maps real Razorpay payment-object shapes onto
+this scoring pipeline, end to end:
+
+- **Prevention Score at payment time** — `payment.amount` (paise → ₹), `payment.method`
+  mapped to a device-type proxy (`upi`/`wallet` → mobile, `card`/`netbanking`/`emi` →
+  desktop), and `payment.notes.merchant_category` / `payment.notes.shipping_method`
+  when present.
+- **Dispute Score, simulated both ways** — the same payment scored with no evidence on
+  file vs. full evidence on file, showing the prevention layer's payoff concretely: if
+  the merchant acts on a HIGH-risk flag and gathers evidence proactively, the
+  *same* payment's simulated dispute outcome moves from a likely `ESCALATE` to a likely
+  `AUTO_CONTEST`.
+- **Demo mode by default** (4 realistic sample payments, no credentials needed); **live
+  mode** activates automatically when `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` are set,
+  letting you browse real Test Mode payments or fetch by ID. Real test payments usually
+  have no `notes.merchant_category` — the page says so explicitly and asks for it
+  manually rather than silently defaulting, since a silent default there would be
+  exactly the kind of hidden assumption this README argues against everywhere else.
+
+In production: `payment.captured` → prevention score, computed in real time; a
+HIGH-risk score triggers an evidence-collection nudge to the merchant via the Razorpay
+Dashboard or API; `payment.dispute.created` → the full detector/EV pipeline runs with
+whatever evidence is on file by then.
+
+## Cost Sensitivity Dashboard
+
+`app/pages/4_Cost_Sensitivity.py` re-runs the EV Decision Engine over a scored sample
+with the cost table as live sliders — contest cost, hard ceiling, minimum evidence
+completeness, analyst labor cost — instead of the fixed constants in `src/config.py`.
+The point: the business parameters this system runs on are configurable inputs, not
+hardcoded modeling assumptions baked into the model itself. Moving the ceiling down or
+the evidence threshold down immediately shows the auto-contest rate, false-positive
+rate, and false-positive cost respond — useful for a live demo, and for a merchant
+whose risk tolerance genuinely differs from the ₹25,000/₹500/60% defaults used
+everywhere else in this README.
 
 ## Human Review Queue
 
@@ -272,11 +339,21 @@ line of output for a live chain verification.
 
 ## Tests
 
-`tests/test_ev_engine.py` — 8 unit tests: the EV formula computed by hand, the hard
-ceiling blocking even at 99% confidence, the evidence-completeness gate blocking
-otherwise-favorable EV, the same win-probability flipping the decision purely on
-amount (ceiling), and input validation on out-of-range probabilities/negative amounts.
-Run with `make test`.
+25 unit tests across 4 files, run with `make test`:
+
+- `tests/test_ev_engine.py` (8) — the EV formula computed by hand, the hard ceiling
+  blocking even at 99% confidence, the evidence-completeness gate blocking
+  otherwise-favorable EV, the same win-probability flipping the decision purely on
+  amount (ceiling), input validation on out-of-range probabilities/negative amounts.
+- `tests/test_evidence.py` (6) — completeness scoring at 0%/partial/100%, and the
+  digital-delivery / signed-POD-without-tracking-number consistency rules.
+- `tests/test_prevention.py` (5) — the prevention dataset holds both classes at the
+  right ratio and stays time-sorted, and its features contain **no** evidence flags or
+  dispute-outcome columns (the whole point of testing this: transaction-time features
+  only, no leakage from information that doesn't exist yet at payment time).
+- `tests/test_backtest.py` (6) — false-positive costing by hand, Accept-All's raw loss,
+  and — directly testing the Feature 1 fix above — that Contest-All bears analyst labor
+  on every case while `AUTO_CONTEST` cases bear none.
 
 ## Defense-only enforcement
 
@@ -299,23 +376,25 @@ Run with `make test`.
 - Rule-based Evidence Completeness Checker
 - Counterfactual re-scoring / evidence-impact ranking
 - EV Decision Engine with an explicit, disclosed cost table and hard ceiling
-- False-positive cost analysis (rubric requirement, not just a headline FP rate)
-- Backtest simulation across 3 strategies, with the unfavorable result disclosed, not hidden
-- Dispute Prevention Score — a second, honestly-weaker model scoring transactions at payment time
+- False-positive cost analysis with real ₹ figures (rubric requirement, not just a headline FP rate)
+- Backtest simulation across 3 strategies, with honest labor-cost accounting and every
+  result disclosed, favorable or not
+- Dispute Prevention Score — a second, honestly-weaker model scoring transactions at
+  payment time, with a disclosed correction after an earlier version scored a coin flip
+- Human Review Queue ranked by recovery value
+- Razorpay payment integration (sample data by default; live Test Mode API when credentials are set)
+- SHAP feature importance, validating the evidence-completeness features against what the model actually learned
+- Cost Sensitivity Dashboard — interactive parameter tuning, not hardcoded assumptions
 - Append-only, hash-chained audit log with a real verification function
-- Streamlit analyst UI: dispute copilot, prevention-score page, and a ranked human review queue
-- 8 unit tests on the EV engine
+- Streamlit analyst UI: 5 pages (dispute copilot, prevention score, review queue, Razorpay integration, cost sensitivity)
+- 25 unit tests across the EV engine, evidence checker, prevention model, and backtest
 
 **Deliberately not built, and why:**
 - **Grounded LLM evidence generator** — cut per the priority call to pick
   detector+verifier over auto-responder. Citation-verification and unsupported-claim
   rejection for an LLM drafting step is 12–16 hours of work that wouldn't make the
   detector/EV engine any better; shown as architecture in `buildathon.md` only.
-- **SHAP explainability** — would sit naturally between calibration and the
-  counterfactual engine (`buildathon.md` architecture), but the counterfactual engine
-  already answers the higher-value question ("what would help?") for this scope, so
-  SHAP was cut rather than bolted on for its own sake.
-- **Analyst review UI beyond the single Streamlit screen, Merchant Intelligence Hub,
+- **Analyst review UI beyond the Streamlit pages here, Merchant Intelligence Hub,
   live continuous retraining** — explicitly Phase 3 / vision-slide items in the
   original design doc; not attempted here.
 - **Multiple reason codes** — the whole point of scoping to 13.1 was to make one slice
@@ -329,8 +408,8 @@ src/                  core library (data_gen, features, model, evidence, counter
 scripts/demo.py        runs the 3 hero cases end to end
 scripts/backtest.py    false-positive cost analysis + 3-strategy ₹ backtest
 app/streamlit_app.py   Chargeback Evidence Copilot (main page)
-app/pages/             Prevention Score, Human Review Queue
-tests/                 unit tests (EV engine)
+app/pages/             Prevention Score, Review Queue, Razorpay Integration, Cost Sensitivity
+tests/                 25 unit tests (EV engine, evidence checker, prevention model, backtest)
 data/, models/, artifacts/, audit_log/   generated at runtime, gitignored
 buildathon.md          original full-scope design doc (north star, not all built)
 ```

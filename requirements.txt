@@ -7,4 +7,6 @@ shap==0.46.0
 streamlit==1.39.0
 pytest==8.3.3
 razorpay==1.4.2
+anthropic==1.3.0        # grounded evidence-draft prototype only; imported lazily
+                        # so the ledger + verifier run without it (see src/evidence_draft.py)
 setuptools<81  # pinned: razorpay 1.4.2's SDK imports pkg_resources, removed in setuptools>=81

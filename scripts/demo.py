@@ -1,7 +1,13 @@
 """
-Runs the 3 demo cases from the project brief through the full pipeline and
-prints a walkthrough. Requires `make train` (or `python -m src.model`) to
-have been run first so models/ and data/history_train.csv exist.
+Runs the demo cases through the full pipeline and prints a walkthrough.
+
+Each case is scored twice on purpose: once by the original two-output EV engine
+(CONTEST vs ACCEPT) and once by the four-way engine that also prices DEFLECT and
+AUTO_RESOLVE against the merchant's VAMP exposure. The contrast is the point --
+where the two disagree is where portfolio risk changes the answer.
+
+Requires `make train` (or `python -m src.model`) to have been run first, so that
+models/ and data/history_train.csv exist.
 
     python -m scripts.demo
 """
@@ -11,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import config
+from src import config, decision_engine, vamp
 from src.pipeline import load_artifacts, score_dispute
 
 CASES = {
@@ -60,11 +66,70 @@ CASES = {
         "has_courier_communication": 1,
         "has_avs_match": 1,
     },
+    "4. The RDR moment: we'd probably WIN at representment, but refunding is cheaper once VAMP is priced in": {
+        "transaction_id": "DEMO-004",
+        "customer_id": "CUST002701",  # real customer from data/disputes.csv; evidence set to full
+        # here (not the row's actual flags) so the case isolates the VAMP effect from
+        # evidence-completeness noise -- the win probability itself is the model's,
+        # not hand-picked.
+        "amount_inr": 3_101.81,
+        "merchant_category": "electronics",
+        "device_type": "desktop",
+        "shipping_method": "standard",
+        "late_filing": 1,
+        "account_age_days_at_dispute": 5,
+        "has_tracking_number": 1,
+        "has_delivery_confirmation": 1,
+        "has_signed_pod": 1,
+        "has_courier_communication": 1,
+        "has_avs_match": 1,
+    },
 }
+
+
+
+def print_four_way(decision, two_way_action):
+    """Print the four-way engine's pricing next to what the two-way engine said.
+
+    Prints every option, not just the winner, because the argument this project
+    makes is about the comparison -- a reader has to see DEFLECT and AUTO_RESOLVE
+    being priced to believe the choice between them means anything.
+    """
+    print("  --- four-way engine (DEFLECT / AUTO_RESOLVE / CONTEST / ESCALATE) ---")
+    for o in decision.options:
+        mark = ">>" if o.action == decision.chosen else "  "
+        if o.ev_comparable:
+            ev = f"EV ₹{o.expected_value_inr:>12,.2f}"
+        else:
+            ev = f"   (not EV-scored)      "
+        status = "" if o.viable else "  BLOCKED"
+        print(f"  {mark} {o.action.value:<13} {ev}   VAMP ₹{o.vamp_cost_inr:>9,.2f}{status}")
+        if not o.viable and o.blocked_reason:
+            print(f"       -> {o.blocked_reason}")
+    print(f"  Chosen: {decision.chosen.value}")
+    for r in decision.reasons:
+        print(f"    {r}")
+    if decision.chosen.value != two_way_action:
+        print(
+            f"  >> The two-way engine said {two_way_action}. Pricing VAMP exposure and the "
+            f"pre-dispute levers changes the answer to {decision.chosen.value}."
+        )
 
 
 def main():
     model, calibrator, feature_cols, history_df = load_artifacts()
+
+    vamp_status = vamp.compute_vamp_status()
+    print("=" * 100)
+    print("PORTFOLIO CONTEXT (the same numbers the four-way engine prices against)")
+    print("-" * 100)
+    print(f"Monthly settled CNP transactions : {config.MERCHANT_MONTHLY_SETTLED_TXNS:,}")
+    print(f"Monthly dispute events           : {config.MERCHANT_MONTHLY_DISPUTE_EVENTS:,}")
+    print(f"VAMP ratio                       : {vamp_status.current_ratio:.3%}  "
+          f"(Excessive threshold {config.VAMP_EXCESSIVE_THRESHOLD:.2%})")
+    print(f"Headroom before Excessive        : {vamp_status.headroom_events:,} dispute events")
+    print(f"Marginal cost of ONE more dispute: ₹{vamp.marginal_vamp_cost(vamp_status):,.2f}")
+    print()
 
     for title, case in CASES.items():
         result = score_dispute(case, model, calibrator, feature_cols, history_df)
@@ -92,6 +157,15 @@ def main():
                 f"{top['baseline_prob']:.0%} -> {top['what_if_prob']:.0%} "
                 f"(+{top['delta']:.0%})"
             )
+
+        decision = decision_engine.decide_four_way(
+            win_prob=result["win_probability"],
+            amount=case["amount_inr"],
+            evidence_completeness=ecv["completeness_score"],
+            reason_code=config.REASON_CODE,
+            vamp_status=vamp_status,
+        )
+        print_four_way(decision, ev["action"].split(".")[-1])
         print()
 
     ok, msg = __import__("src.audit", fromlist=["verify_chain"]).verify_chain()

@@ -106,6 +106,42 @@ with col_res:
 
         st.markdown("---")
         st.markdown("**VAMP impact of this rule**")
+
+        before_pct = best["vamp_ratio_before_pct"]
+        after_pct = best["vamp_ratio_after_pct"]
+        threshold_pct = vamp_status.threshold * 100
+        gauge_max = max(threshold_pct * 1.6, before_pct * 1.1, after_pct * 1.1, 0.1)
+        before_frac = min(before_pct / gauge_max, 1.0) * 100
+        after_frac = min(after_pct / gauge_max, 1.0) * 100
+        threshold_frac = min(threshold_pct / gauge_max, 1.0) * 100
+
+        st.markdown(
+            f"""
+<div style="margin-top:6px;">
+  <div style="position:relative; height:22px; border-radius:6px; overflow:visible;
+              background:linear-gradient(90deg, #22c55e 0%, #eab308 {threshold_frac * 0.7:.1f}%,
+              #ef4444 {threshold_frac:.1f}%, #7f1d1d 100%);">
+    <div style="position:absolute; left:{threshold_frac:.1f}%; top:-4px; bottom:-4px;
+                width:2px; background:#111; opacity:0.55;"></div>
+    <div style="position:absolute; left:{before_frac:.1f}%; top:-9px; width:12px; height:12px;
+                border-radius:50%; background:transparent; border:2px solid #111; opacity:0.55;
+                transform:translateX(-6px);"></div>
+    <div style="position:absolute; left:{after_frac:.1f}%; top:-6px; width:0; height:0;
+                border-left:7px solid transparent; border-right:7px solid transparent;
+                border-top:10px solid #111; transform:translateX(-7px);"></div>
+  </div>
+  <div style="display:flex; justify-content:space-between; font-size:12px; margin-top:2px;
+              opacity:0.75;">
+    <span>0%</span><span>Excessive threshold {threshold_pct:.2f}% →</span><span>{gauge_max:.2f}%</span>
+  </div>
+  <div style="font-size:11px; opacity:0.65; margin-top:4px;">
+    ○ before this rule &nbsp;&nbsp; ▲ after this rule
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
         v1, v2 = st.columns(2)
         v1.metric("VAMP ratio", f"{best['vamp_ratio_after_pct']:.3f}%",
                   f"{best['vamp_ratio_after_pct'] - best['vamp_ratio_before_pct']:+.3f} pp")

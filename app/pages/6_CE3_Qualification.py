@@ -146,9 +146,15 @@ with col_r:
     summary = ce3.ce3_outcome_summary(result)
 
     if result.qualifies:
-        st.success(f"**{summary['status']}**")
+        badge_bg, badge_fg = "#dcfce7", "#166534"
     else:
-        st.error(f"**{summary['status']}**")
+        badge_bg, badge_fg = "#fee2e2", "#991b1b"
+    st.markdown(
+        f'<span style="background:{badge_bg}; color:{badge_fg}; font-weight:700; '
+        f'font-size:1.1rem; padding:6px 16px; border-radius:6px; display:inline-block;">'
+        f'{summary["status"]}</span>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown(f"**Effect:** {summary['effect']}")
     st.markdown(f"**VAMP impact:** {summary['vamp_impact']}")

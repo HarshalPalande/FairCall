@@ -13,9 +13,11 @@ import pandas as pd
 import streamlit as st
 
 from src import config, prevention
+from src.bootstrap import ensure_trained
 from src.prevention import score_transaction
 
 st.set_page_config(page_title="Dispute Prevention Score", layout="wide")
+ensure_trained()
 st.title("Dispute Prevention Score")
 st.caption(
     "Score a transaction at payment time — BEFORE any dispute exists. "

@@ -170,40 +170,55 @@ Every figure in the tables below is from that run. Reproduce with
 
 ## Architecture
 
-```
-Razorpay payment.captured webhook
-    |
-    v
-Transaction --> Dispute Prevention Score (XGBoost, txn-time features only)
-                  |-- HIGH/MEDIUM risk --> "collect evidence now" alert to merchant
-                  |-- LOW risk         --> standard monitoring
+**This is three separate, independently-scoped components, not one linear
+pipeline** — an earlier version of this diagram (and of a hand-drawn one we
+checked it against) drew an implied arrow from CE3.0 straight into the main
+detector, which doesn't exist in the code: CE3.0 evaluates reason code 10.4
+only, the detector/EV pipeline is trained and scoped to reason code 13.1 only,
+and neither the Prevention Score nor CE3.0 is wired into the Four-Way Decision
+Engine's inputs. Each subgraph below is complete and self-contained; nothing
+crosses between them at runtime.
 
-Razorpay payment.dispute.created webhook
-    |
-    v
-Dispute (10.4) --> CE3.0 Qualification Engine (deterministic rules, zero ML)
-                     |-- QUALIFIES     --> blocked pre-emptively, liability shifts
-                     |                     to issuer, never enters the VAMP ratio
-                     |-- DOES NOT QUAL --> standard representment path
+```mermaid
+flowchart TD
+    subgraph PREV["1. Prevention -- before any dispute exists"]
+        direction LR
+        TXN["Razorpay payment.captured"] --> PSCORE["Prevention Score<br/>XGBoost, transaction-time features only"]
+        PSCORE --> TIER{"Risk tier"}
+        TIER -->|"HIGH / MEDIUM"| ALERT["Advisory: collect evidence now<br/>(shown to the merchant -- nothing auto-triggered)"]
+        TIER -->|"LOW"| MON["Standard monitoring"]
+    end
 
-Dispute (13.1) --> Feature Store (UID aggregates, causal/past-only)
-        --> XGBoost Detector --> Isotonic Calibrator
-        --> Evidence Completeness Checker (rule-based, standalone)
-        --> Counterfactual Engine (what evidence would help most?)
-        --> Four-Way Decision Engine (EV + VAMP portfolio cost)
-              |   guardrails first, and absolute:
-              |     hard ₹ ceiling  -> gates ALL automated actions
-              |     evidence gate   -> gates CONTEST only
-              |
-              |-- DEFLECT       Order Insight, pre-dispute      (no VAMP impact)
-              |-- AUTO_RESOLVE  RDR refund                      (no VAMP impact if non-fraud)
-              |-- CONTEST       representment                   (VAMP already incurred)
-              |-- ESCALATE      Human Review Queue  <-- fallback when no automated
-                                                       action is permitted; never
-                                                       EV-scored against the others
-        --> Grounded Evidence Draft (PROTOTYPE, human-gated, not in decision path)
-        --> Audit Trail (hash-chained, append-only)
-        --> SHAP Explainability (validates feature importance, see below)
+    subgraph CE3S["2. CE3.0 Qualification -- reason code 10.4 only, zero ML"]
+        direction LR
+        DISP104["Razorpay payment.dispute.created<br/>reason code 10.4"] --> CE3ENGINE["CE3.0 rules engine<br/>deterministic, 5 fixed rules"]
+        CE3ENGINE -->|"qualifies"| BLOCKED["Blocked pre-emptively<br/>liability shifts to issuer, off VAMP ratio"]
+        CE3ENGINE -->|"does not qualify"| STD104["Standard 10.4 representment<br/>(not the pipeline below -- different reason code)"]
+    end
+
+    subgraph MAIN["3. Reactive pipeline -- reason code 13.1 only"]
+        direction TB
+        DISP131["Razorpay payment.dispute.created<br/>reason code 13.1"] --> FS["Feature Store<br/>UID aggregates, strictly past-only"]
+        FS --> DET["XGBoost Detector"] --> CAL["Isotonic Calibrator"]
+        FS -.->|"training-time only"| SHAPX["SHAP<br/>validates feature importance, not in live scoring"]
+        ECC["Evidence Completeness Checker<br/>rule-based, works with zero ML"]
+        CF["Counterfactual Engine<br/>which evidence would help most?"]
+        CAL --> CF
+        CAL --> GUARD
+        ECC --> GUARD
+        GUARD{"Guardrails -- absolute, not EV-overridable<br/>1. hard rupee ceiling: blocks every automated action<br/>2. evidence gate: blocks CONTEST only"}
+        GUARD -->|"pass"| FOURWAY["Four-Way Decision Engine<br/>picks max(EV) across viable automated actions"]
+        GUARD -->|"amount over ceiling"| ESC
+        FOURWAY --> DEFLECT["DEFLECT -- Order Insight<br/>no VAMP impact if it works"]
+        FOURWAY --> AUTORES["AUTO_RESOLVE -- RDR refund<br/>off VAMP ratio if non-fraud reason code"]
+        FOURWAY --> CONTEST["CONTEST -- representment<br/>VAMP already incurred, win or lose"]
+        FOURWAY -.->|"no viable automated action"| ESC["ESCALATE -- Human Review Queue<br/>fallback only, never EV-scored against the others"]
+        DEFLECT --> AUDIT
+        AUTORES --> AUDIT
+        CONTEST --> AUDIT
+        ESC --> AUDIT["Audit Trail<br/>hash-chained, append-only -- every decision, both engines"]
+        FOURWAY -.->|"advisory, human-gated"| DRAFT["Grounded Evidence Draft -- PROTOTYPE<br/>not called by anything in this decision path"]
+    end
 ```
 
 `app/pages/3_Razorpay_Integration.py` demonstrates the webhook mapping above end to
@@ -709,6 +724,18 @@ them the way someone hiding a bad call would (`ESCALATE` on ₹42,000 → `AUTO_
 ₹9,000), and re-verifies. The chain reports the exact line and reason, and appending
 further valid entries on top does not heal it. `tests/test_audit.py` asserts the same
 for deletion and reordering.
+
+**One gap we found and closed while double-checking our own architecture diagram**
+(below): `app/pages/0_Dispute_Copilot.py` computes two decisions per dispute — the
+original two-way call (`AUTO_CONTEST`/`ESCALATE`, via `score_dispute()`) and the
+four-way call (`DEFLECT`/`AUTO_RESOLVE`/`CONTEST`/`ESCALATE`, via
+`decision_engine.decide_four_way()`) that's actually what the page shows the user.
+Only the first was ever being written to the audit log — the decision a user
+actually sees was silently unaudited, which quietly broke the "every scored
+decision is logged" claim in the Defense-only table below. Both are now logged
+under the same `transaction_id`, distinguished by an `"engine"` field
+(`"two_way"` vs. `"four_way"`), so a single dispute produces two adjacent,
+independently hash-chained entries rather than one.
 
 ## Tests
 

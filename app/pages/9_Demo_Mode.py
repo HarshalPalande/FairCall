@@ -34,8 +34,10 @@ import pandas as pd
 import streamlit as st
 
 from src import config, prevention
+from src.bootstrap import ensure_trained
 
 st.set_page_config(page_title="Demo Mode", layout="wide")
+ensure_trained()
 st.title("Demo Mode — Live Batch")
 st.caption(
     "50 simulated sessions, 100 fresh synthetic transactions, scored live by the "

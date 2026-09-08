@@ -13,9 +13,11 @@ import pandas as pd
 import streamlit as st
 
 from src import config, data_gen, root_cause
+from src.bootstrap import ensure_trained
 from src.pipeline import load_artifacts
 
 st.set_page_config(page_title="Root Cause Intelligence", layout="wide")
+ensure_trained()
 st.title("Root Cause Intelligence")
 st.caption(
     "Not 'will we win this dispute?' — 'what should this merchant change?' "

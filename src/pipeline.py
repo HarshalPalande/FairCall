@@ -60,6 +60,7 @@ def score_dispute(raw_case: dict, model, calibrator, feature_cols, history_df, w
     if write_audit:
         log_decision({
             "transaction_id": result["transaction_id"],
+            "engine": "two_way",
             "input_case": {k: v for k, v in raw_case.items() if k != "customer_id" or True},
             "win_probability": result["win_probability"],
             "evidence_completeness": evidence_result.completeness_score,

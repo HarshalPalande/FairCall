@@ -19,10 +19,12 @@ import pandas as pd
 import streamlit as st
 
 from src import config, decision_engine, vamp
-from src.audit import verify_chain
+from src.audit import log_decision, verify_chain
+from src.bootstrap import ensure_trained
 from src.pipeline import load_artifacts, score_dispute
 
 st.set_page_config(page_title="AI Risk Manager — Dispute Copilot", layout="wide")
+ensure_trained()
 
 
 @st.cache_resource
@@ -192,6 +194,37 @@ with col_output:
             evidence_completeness=ecv["completeness_score"],
             reason_code=config.REASON_CODE,
         )
+
+        # `score_dispute()` above already logged the two-way (AUTO_CONTEST/ESCALATE)
+        # call. But this page's actual, user-facing decision is the four-way one
+        # rendered below -- and until this line, that decision was never written to
+        # the audit trail at all, which quietly broke the "every scored decision is
+        # logged" claim this project makes elsewhere. Same transaction_id as the
+        # two-way entry, so both records for one dispute sit next to each other in
+        # the hash chain; a distinct "engine" field keeps them unambiguous on replay.
+        log_decision({
+            "transaction_id": case["transaction_id"],
+            "engine": "four_way",
+            "win_probability": result["win_probability"],
+            "amount_inr": amount,
+            "evidence_completeness": ecv["completeness_score"],
+            "chosen_action": four_way.chosen.value,
+            "vamp_cost_inr": four_way.vamp_cost_inr,
+            "vamp_headroom_events": four_way.vamp_headroom,
+            "ceiling_blocked": four_way.ceiling_blocked,
+            "evidence_blocked": four_way.evidence_blocked,
+            "options": [
+                {
+                    "action": opt.action.value,
+                    "expected_value_inr": opt.expected_value_inr,
+                    "vamp_cost_inr": opt.vamp_cost_inr,
+                    "viable": opt.viable,
+                    "ev_comparable": opt.ev_comparable,
+                }
+                for opt in four_way.options
+            ],
+            "reasons": four_way.reasons,
+        })
 
         rows = []
         for opt in four_way.options:

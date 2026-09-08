@@ -11,10 +11,12 @@ import streamlit as st
 
 from src import config, data_gen
 from src.backtest import score_test_set
+from src.bootstrap import ensure_trained
 from src.model import time_respecting_split
 from src.pipeline import load_artifacts
 
 st.set_page_config(page_title="Review Queue", layout="wide")
+ensure_trained()
 st.title("Analyst Review Queue")
 st.caption("ESCALATE cases ranked by potential recovery value — highest-impact decisions surface first.")
 

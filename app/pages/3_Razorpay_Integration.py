@@ -14,10 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import streamlit as st
 
 from src import config
+from src.bootstrap import ensure_trained
 from src.pipeline import load_artifacts, score_dispute
 from src.prevention import score_transaction
 
 st.set_page_config(page_title="Razorpay Integration", layout="wide")
+ensure_trained()
 st.title("Razorpay Payment -> Dispute Risk Pipeline")
 st.caption(
     "Demonstrates end-to-end flow: Razorpay payment -> prevention score -> "

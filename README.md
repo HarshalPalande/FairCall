@@ -176,49 +176,56 @@ checked it against) drew an implied arrow from CE3.0 straight into the main
 detector, which doesn't exist in the code: CE3.0 evaluates reason code 10.4
 only, the detector/EV pipeline is trained and scoped to reason code 13.1 only,
 and neither the Prevention Score nor CE3.0 is wired into the Four-Way Decision
-Engine's inputs. Each subgraph below is complete and self-contained; nothing
-crosses between them at runtime.
+Engine's inputs. Each of the three diagrams below is complete and self-contained;
+nothing crosses between them at runtime. The numbering is a reading order, not a
+causal one: #1 happens before any dispute exists, for any transaction. #2 and #3
+are not sequential stages of the same dispute — they're alternative paths for two
+different, mutually exclusive reason codes (a dispute is either 10.4 or 13.1,
+never both), each handled by its own standalone component.
+
+### 1. Prevention — before any dispute exists
+
+```mermaid
+flowchart LR
+    TXN["Razorpay payment.captured"] --> PSCORE["Prevention Score<br/>XGBoost, transaction-time features only"]
+    PSCORE --> TIER{"Risk tier"}
+    TIER -->|"HIGH / MEDIUM"| ALERT["Advisory: collect evidence now<br/>(shown to the merchant -- nothing auto-triggered)"]
+    TIER -->|"LOW"| MON["Standard monitoring"]
+```
+
+### 2. CE3.0 Qualification — reason code 10.4 only, zero ML
+
+```mermaid
+flowchart LR
+    DISP104["Razorpay payment.dispute.created<br/>reason code 10.4"] --> CE3ENGINE["CE3.0 rules engine<br/>deterministic, 5 fixed rules"]
+    CE3ENGINE -->|"qualifies"| BLOCKED["Blocked pre-emptively<br/>liability shifts to issuer, off VAMP ratio"]
+    CE3ENGINE -->|"does not qualify"| STD104["Standard 10.4 representment<br/>(not the pipeline below -- different reason code)"]
+```
+
+### 3. Reactive pipeline — reason code 13.1 only
 
 ```mermaid
 flowchart TD
-    subgraph PREV["1. Prevention -- before any dispute exists"]
-        direction LR
-        TXN["Razorpay payment.captured"] --> PSCORE["Prevention Score<br/>XGBoost, transaction-time features only"]
-        PSCORE --> TIER{"Risk tier"}
-        TIER -->|"HIGH / MEDIUM"| ALERT["Advisory: collect evidence now<br/>(shown to the merchant -- nothing auto-triggered)"]
-        TIER -->|"LOW"| MON["Standard monitoring"]
-    end
-
-    subgraph CE3S["2. CE3.0 Qualification -- reason code 10.4 only, zero ML"]
-        direction LR
-        DISP104["Razorpay payment.dispute.created<br/>reason code 10.4"] --> CE3ENGINE["CE3.0 rules engine<br/>deterministic, 5 fixed rules"]
-        CE3ENGINE -->|"qualifies"| BLOCKED["Blocked pre-emptively<br/>liability shifts to issuer, off VAMP ratio"]
-        CE3ENGINE -->|"does not qualify"| STD104["Standard 10.4 representment<br/>(not the pipeline below -- different reason code)"]
-    end
-
-    subgraph MAIN["3. Reactive pipeline -- reason code 13.1 only"]
-        direction TB
-        DISP131["Razorpay payment.dispute.created<br/>reason code 13.1"] --> FS["Feature Store<br/>UID aggregates, strictly past-only"]
-        FS --> DET["XGBoost Detector"] --> CAL["Isotonic Calibrator"]
-        FS -.->|"training-time only"| SHAPX["SHAP<br/>validates feature importance, not in live scoring"]
-        ECC["Evidence Completeness Checker<br/>rule-based, works with zero ML"]
-        CF["Counterfactual Engine<br/>which evidence would help most?"]
-        CAL --> CF
-        CAL --> GUARD
-        ECC --> GUARD
-        GUARD{"Guardrails -- absolute, not EV-overridable<br/>1. hard rupee ceiling: blocks every automated action<br/>2. evidence gate: blocks CONTEST only"}
-        GUARD -->|"pass"| FOURWAY["Four-Way Decision Engine<br/>picks max(EV) across viable automated actions"]
-        GUARD -->|"amount over ceiling"| ESC
-        FOURWAY --> DEFLECT["DEFLECT -- Order Insight<br/>no VAMP impact if it works"]
-        FOURWAY --> AUTORES["AUTO_RESOLVE -- RDR refund<br/>off VAMP ratio if non-fraud reason code"]
-        FOURWAY --> CONTEST["CONTEST -- representment<br/>VAMP already incurred, win or lose"]
-        FOURWAY -.->|"no viable automated action"| ESC["ESCALATE -- Human Review Queue<br/>fallback only, never EV-scored against the others"]
-        DEFLECT --> AUDIT
-        AUTORES --> AUDIT
-        CONTEST --> AUDIT
-        ESC --> AUDIT["Audit Trail<br/>hash-chained, append-only -- every decision, both engines"]
-        FOURWAY -.->|"advisory, human-gated"| DRAFT["Grounded Evidence Draft -- PROTOTYPE<br/>not called by anything in this decision path"]
-    end
+    DISP131["Razorpay payment.dispute.created<br/>reason code 13.1"] --> FS["Feature Store<br/>UID aggregates, strictly past-only"]
+    FS --> DET["XGBoost Detector"] --> CAL["Isotonic Calibrator"]
+    FS -.->|"training-time only"| SHAPX["SHAP<br/>validates feature importance, not in live scoring"]
+    ECC["Evidence Completeness Checker<br/>rule-based, works with zero ML"]
+    CF["Counterfactual Engine<br/>which evidence would help most?"]
+    CAL --> CF
+    CAL --> GUARD
+    ECC --> GUARD
+    GUARD{"Guardrails -- absolute, not EV-overridable<br/>1. hard rupee ceiling: blocks every automated action<br/>2. evidence gate: blocks CONTEST only"}
+    GUARD -->|"pass"| FOURWAY["Four-Way Decision Engine<br/>picks max(EV) across viable automated actions"]
+    GUARD -->|"amount over ceiling"| ESC
+    FOURWAY --> DEFLECT["DEFLECT -- Order Insight<br/>no VAMP impact if it works"]
+    FOURWAY --> AUTORES["AUTO_RESOLVE -- RDR refund<br/>off VAMP ratio if non-fraud reason code"]
+    FOURWAY --> CONTEST["CONTEST -- representment<br/>VAMP already incurred, win or lose"]
+    FOURWAY -.->|"no viable automated action"| ESC["ESCALATE -- Human Review Queue<br/>fallback only, never EV-scored against the others"]
+    DEFLECT --> AUDIT
+    AUTORES --> AUDIT
+    CONTEST --> AUDIT
+    ESC --> AUDIT["Audit Trail<br/>hash-chained, append-only -- every decision, both engines"]
+    FOURWAY -.->|"advisory, human-gated"| DRAFT["Grounded Evidence Draft -- PROTOTYPE<br/>not called by anything in this decision path"]
 ```
 
 `app/pages/3_Razorpay_Integration.py` demonstrates the webhook mapping above end to

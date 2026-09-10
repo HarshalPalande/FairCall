@@ -28,12 +28,22 @@ import streamlit as st
 from src import config
 
 
-@st.cache_resource(show_spinner="First request on this instance — training models (~20-60s), then cached for every visitor until this instance sleeps...")
+@st.cache_resource(show_spinner="First request on this instance — training models (~15-30s), then cached for every visitor until this instance sleeps...")
 def ensure_trained() -> bool:
-    """Trains everything `make train` would produce (detector, calibrator,
+    """Trains everything the app's pages need (detector, calibrator,
     prevention model) only if it isn't already on disk. Returns True once
     artifacts are confirmed present, so callers can ignore the return value
-    and just rely on the cache having run this at least once."""
+    and just rely on the cache having run this at least once.
+
+    Calls src.model.train(fast=True): a smaller synthetic dataset, fewer
+    trees, and no SHAP/plot generation (nothing here reads those PNGs at
+    runtime) -- full local `make train` produced every number in the README
+    and is untouched. A first deploy attempt trained on the full, non-fast
+    settings and got CPU-throttled by Streamlit Community Cloud's free tier
+    before finishing; fast=True exists specifically so a cold start fits
+    inside that budget. The live app's own freshly-trained metrics will
+    therefore differ slightly from the README's documented numbers -- a
+    disclosed tradeoff, not a silent inconsistency."""
     required = [
         config.MODELS_DIR / "detector.pkl",
         config.MODELS_DIR / "calibrator.pkl",
@@ -45,5 +55,5 @@ def ensure_trained() -> bool:
     if not all(p.exists() for p in required):
         from src import model as model_module
 
-        model_module.train(verbose=False)
+        model_module.train(verbose=False, fast=True)
     return True

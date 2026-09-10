@@ -228,7 +228,7 @@ flowchart TD
     FOURWAY -.->|"advisory, human-gated"| DRAFT["Grounded Evidence Draft -- PROTOTYPE<br/>not called by anything in this decision path"]
 ```
 
-`app/pages/3_Razorpay_Integration.py` demonstrates the webhook mapping above end to
+`app/screens/3_Razorpay_Integration.py` demonstrates the webhook mapping above end to
 end against real Razorpay payment-object shapes (sample data by default, live Test
 Mode API if `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` are set) — see the dedicated
 section below.
@@ -342,7 +342,7 @@ count sequentially across all 3,000 test cases, since headroom (and therefore ma
 VAMP cost) changes with every case decided before it — a materially different
 simulation from scoring each case independently, and one this backtest does not
 attempt. The four-way engine's actual ₹ effect is demonstrated per-case in `make demo`
-and, at the portfolio level, in the RDR Optimizer page (`app/pages/7_RDR_Optimizer.py`),
+and, at the portfolio level, in the RDR Optimizer page (`app/screens/7_RDR_Optimizer.py`),
 not here.
 
 ## Dispute Prevention Score — proactive risk flagging
@@ -450,7 +450,7 @@ either being a restatement of customer history. Reproduce the table above with
 
 ## Razorpay integration
 
-`app/pages/3_Razorpay_Integration.py` maps real Razorpay payment-object shapes onto
+`app/screens/3_Razorpay_Integration.py` maps real Razorpay payment-object shapes onto
 this scoring pipeline, end to end:
 
 - **Prevention Score at payment time** — `payment.amount` (paise → ₹), `payment.method`
@@ -476,7 +476,7 @@ whatever evidence is on file by then.
 
 ## Cost Sensitivity Dashboard
 
-`app/pages/4_Cost_Sensitivity.py` re-runs the EV Decision Engine over a scored sample
+`app/screens/4_Cost_Sensitivity.py` re-runs the EV Decision Engine over a scored sample
 with the cost table as live sliders — contest cost, hard ceiling, minimum evidence
 completeness, analyst labor cost — instead of the fixed constants in `src/config.py`.
 The point: the business parameters this system runs on are configurable inputs, not
@@ -488,7 +488,7 @@ everywhere else in this README.
 
 ## Human Review Queue
 
-For the 44% of cases the EV engine escalates, `app/pages/2_Review_Queue.py` gives an
+For the 44% of cases the EV engine escalates, `app/screens/2_Review_Queue.py` gives an
 analyst a ranked queue (by `EV(contest)` descending, so the highest-value decisions
 surface first) with the win probability, EV math, evidence completeness, and the
 specific reason(s) the case didn't qualify for auto-action, all in one view — no need to
@@ -535,7 +535,7 @@ effect as something the EV formula itself produced.
 
 ## VAMP — the cost the transaction-level EV math misses
 
-`src/vamp.py`, `app/pages/5_VAMP_Risk.py`.
+`src/vamp.py`, `app/screens/5_VAMP_Risk.py`.
 
 The EV engine above prices a dispute at its transaction amount. That is incomplete.
 Under Visa's Acquirer Monitoring Program, every dispute also increments a
@@ -617,7 +617,7 @@ contest EV genuinely was favourable — otherwise the case proves nothing.
 
 ## RDR Rule Optimizer
 
-`src/rdr_optimizer.py`, `app/pages/7_RDR_Optimizer.py`.
+`src/rdr_optimizer.py`, `app/screens/7_RDR_Optimizer.py`.
 
 Visa permits a limited number of merchant-configured RDR rule scenarios. Given a dispute
 distribution and current VAMP headroom, what amount threshold minimises **total** cost —
@@ -644,7 +644,7 @@ Two disclosed modelling choices, because the output is a ₹ recommendation:
 
 ## CE3.0 qualification engine
 
-`src/ce3.py`, `app/pages/6_CE3_Qualification.py`. A deterministic, zero-ML rules engine
+`src/ce3.py`, `app/screens/6_CE3_Qualification.py`. A deterministic, zero-ML rules engine
 for Visa Compelling Evidence 3.0: ≥2 prior undisputed transactions 120–365 days before
 the dispute, ≥2 data elements matching across them, at least one of which must be IP
 address or device ID. Qualification blocks the dispute pre-emptively and shifts liability
@@ -733,7 +733,7 @@ further valid entries on top does not heal it. `tests/test_audit.py` asserts the
 for deletion and reordering.
 
 **One gap we found and closed while double-checking our own architecture diagram**
-(below): `app/pages/0_Dispute_Copilot.py` computes two decisions per dispute — the
+(below): `app/screens/0_Dispute_Copilot.py` computes two decisions per dispute — the
 original two-way call (`AUTO_CONTEST`/`ESCALATE`, via `score_dispute()`) and the
 four-way call (`DEFLECT`/`AUTO_RESOLVE`/`CONTEST`/`ESCALATE`, via
 `decision_engine.decide_four_way()`) that's actually what the page shows the user.
@@ -874,7 +874,7 @@ scripts/demo.py        runs the 3 hero cases end to end
 scripts/backtest.py    false-positive cost analysis + 3-strategy ₹ backtest
 scripts/tamper_demo.py edits a logged decision, shows the hash chain detecting it
 app/streamlit_app.py   Chargeback Evidence Copilot (main page)
-app/pages/             Prevention Score, Review Queue, Razorpay Integration, Cost Sensitivity
+app/screens/             Prevention Score, Review Queue, Razorpay Integration, Cost Sensitivity
 tests/                 124 tests (EV engine, evidence checker, prevention model, backtest,
                        audit chain + tamper cases, end-to-end pipeline)
 data/, models/, artifacts/, audit_log/   generated at runtime, gitignored

@@ -25,39 +25,39 @@ import streamlit as st
 
 # --- what a first-time viewer should see first ----------------------------
 demo_mode = st.Page(
-    "pages/9_Demo_Mode.py", title="Demo Mode", url_path="Demo_Mode", default=True,
+    "screens/9_Demo_Mode.py", title="Demo Mode", url_path="Demo_Mode", default=True,
 )
 root_cause = st.Page(
-    "pages/10_Root_Cause.py", title="Root Cause", url_path="Root_Cause",
+    "screens/10_Root_Cause.py", title="Root Cause", url_path="Root_Cause",
 )
 
 # --- everything else ------------------------------------------------------
 dispute_copilot = st.Page(
-    "pages/0_Dispute_Copilot.py", title="Dispute Copilot", url_path="Dispute_Copilot",
+    "screens/0_Dispute_Copilot.py", title="Dispute Copilot", url_path="Dispute_Copilot",
 )
 four_way = st.Page(
-    "pages/8_Four_Way_Simulator.py", title="Four-Way Simulator", url_path="Four_Way_Simulator",
+    "screens/8_Four_Way_Simulator.py", title="Four-Way Simulator", url_path="Four_Way_Simulator",
 )
 prevention = st.Page(
-    "pages/1_Prevention_Score.py", title="Prevention Score", url_path="Prevention_Score",
+    "screens/1_Prevention_Score.py", title="Prevention Score", url_path="Prevention_Score",
 )
 review_queue = st.Page(
-    "pages/2_Review_Queue.py", title="Review Queue", url_path="Review_Queue",
+    "screens/2_Review_Queue.py", title="Review Queue", url_path="Review_Queue",
 )
 rdr = st.Page(
-    "pages/7_RDR_Optimizer.py", title="RDR Optimizer", url_path="RDR_Optimizer",
+    "screens/7_RDR_Optimizer.py", title="RDR Optimizer", url_path="RDR_Optimizer",
 )
 vamp = st.Page(
-    "pages/5_VAMP_Risk.py", title="VAMP Risk", url_path="VAMP_Risk",
+    "screens/5_VAMP_Risk.py", title="VAMP Risk", url_path="VAMP_Risk",
 )
 ce3 = st.Page(
-    "pages/6_CE3_Qualification.py", title="CE3.0 Qualification", url_path="CE3_Qualification",
+    "screens/6_CE3_Qualification.py", title="CE3.0 Qualification", url_path="CE3_Qualification",
 )
 cost = st.Page(
-    "pages/4_Cost_Sensitivity.py", title="Cost Sensitivity", url_path="Cost_Sensitivity",
+    "screens/4_Cost_Sensitivity.py", title="Cost Sensitivity", url_path="Cost_Sensitivity",
 )
 razorpay = st.Page(
-    "pages/3_Razorpay_Integration.py", title="Razorpay Integration", url_path="Razorpay_Integration",
+    "screens/3_Razorpay_Integration.py", title="Razorpay Integration", url_path="Razorpay_Integration",
 )
 
 PRIMARY = [demo_mode, root_cause]

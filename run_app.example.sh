@@ -8,7 +8,7 @@
 # run_app.sh is gitignored precisely because it holds a secret. This template
 # is the only version that belongs in version control.
 #
-# Without these variables the app still runs — app/pages/3_Razorpay_Integration.py
+# Without these variables the app still runs — app/screens/3_Razorpay_Integration.py
 # falls back to four built-in sample payments and says so on screen. The keys only
 # enable browsing real Test Mode payments from your own account.
 set -euo pipefail

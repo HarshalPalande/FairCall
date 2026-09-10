@@ -36,7 +36,7 @@ import xgboost as xgb
 from src import config, data_gen
 
 
-def build_transaction_dataset(seed=config.SEED):
+def build_transaction_dataset(seed=config.SEED, n=None):
     """
     Build a dataset of ALL transactions — both those that became disputes
     and a background of normal transactions that never led to a dispute.
@@ -76,16 +76,17 @@ def build_transaction_dataset(seed=config.SEED):
     these uniformly-sampled normal rows, so their realized "fraction of
     transactions that became a dispute" is honestly higher — a real, prior,
     causally-available signal, not a leak from the current transaction's own
-    future. (Coupled to `generate_disputes()` being called with its default
-    `n` above — if that call ever passes an explicit `n=`, `n_customers`
-    below must match it.)
+    future. `n_customers` below is derived from the same `n` passed to
+    `generate_disputes()`, so a caller overriding `n` (e.g. src/model.py's
+    fast=True deploy-bootstrap path) keeps the two populations matched.
     """
-    disputes = data_gen.generate_disputes(seed=seed)
+    n = n if n is not None else config.N_DISPUTES
+    disputes = data_gen.generate_disputes(n=n, seed=seed)
 
     n_normal = len(disputes) * 5
     rng = np.random.default_rng(seed + 1)
 
-    n_customers = max(500, config.N_DISPUTES // 6)
+    n_customers = max(500, n // 6)
     pop_rng = np.random.default_rng(seed)
     customer_ids, _, _, _ = data_gen.generate_customer_population(pop_rng, n_customers)
     normal_customer_id = rng.choice(customer_ids, size=n_normal)
@@ -205,9 +206,15 @@ def build_prevention_features(df):
     return X
 
 
-def train_prevention_model(seed=config.SEED, verbose=True):
-    """Train the dispute prevention model with a time-respecting split."""
-    data = build_transaction_dataset(seed=seed)
+def train_prevention_model(seed=config.SEED, verbose=True, fast=False):
+    """Train the dispute prevention model with a time-respecting split.
+
+    fast=True trains on a smaller background population and skips the
+    category-risk plot -- used only by src/model.py's fast=True path for a
+    deploy-time cold start on a CPU-throttled free-tier container. `make
+    train` (fast=False, the default) is unaffected."""
+    gen_n = 4_000 if fast else None
+    data = build_transaction_dataset(seed=seed, n=gen_n)
 
     # Build features on the FULL sorted frame so cust_prior_* aggregates for
     # test rows correctly see train rows as history, then slice back out by
@@ -234,7 +241,7 @@ def train_prevention_model(seed=config.SEED, verbose=True):
         print(f"Dispute base rate — train: {y_train.mean():.1%}, test: {y_test.mean():.1%}")
 
     model = xgb.XGBClassifier(
-        n_estimators=200,
+        n_estimators=80 if fast else 200,
         max_depth=3,
         learning_rate=0.05,
         subsample=0.8,
@@ -296,7 +303,8 @@ def train_prevention_model(seed=config.SEED, verbose=True):
     with open(config.ARTIFACTS_DIR / "prevention_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
-    plot_category_risk(test_df, probs)
+    if not fast:
+        plot_category_risk(test_df, probs)
 
     return model, feature_cols, metrics
 

@@ -41,8 +41,16 @@ def time_respecting_split(df: pd.DataFrame, train_frac=0.70, calib_frac=0.15):
     return df.iloc[:train_end], df.iloc[train_end:calib_end], df.iloc[calib_end:]
 
 
-def train(seed=config.SEED, verbose=True):
-    raw = data_gen.generate_disputes(seed=seed)
+def train(seed=config.SEED, verbose=True, fast=False):
+    """fast=True trains on a smaller synthetic dataset and skips SHAP/plots —
+    used only by src/bootstrap.py for a deploy-time cold start on a
+    CPU-throttled free-tier container. `make train` (fast=False, the default)
+    is untouched, so every number in the README stays reproducible exactly as
+    documented. The live app's own freshly-trained metrics will therefore
+    differ slightly from the README's — that's the deliberate cost of fitting
+    in a throttled container's CPU budget, not a silent inconsistency."""
+    n = 4_000 if fast else config.N_DISPUTES
+    raw = data_gen.generate_disputes(n=n, seed=seed)
     train_raw, calib_raw, test_raw = time_respecting_split(raw)
 
     if verbose:
@@ -69,7 +77,7 @@ def train(seed=config.SEED, verbose=True):
     feature_cols = list(X_full.columns)
 
     model = xgb.XGBClassifier(
-        n_estimators=300,
+        n_estimators=100 if fast else 300,
         max_depth=4,
         learning_rate=0.05,
         subsample=0.8,
@@ -91,29 +99,34 @@ def train(seed=config.SEED, verbose=True):
     if verbose:
         print(json.dumps(metrics, indent=2))
 
-    plot_reliability(y_test.values, calibrated_test_probs, raw_test_probs)
+    # SHAP and the reliability plot are pure documentation artifacts — no
+    # Streamlit page reads shap_summary.png or reliability_diagram.png at
+    # runtime, so skipping them in fast mode costs nothing functionally and
+    # saves a TreeExplainer pass plus two matplotlib renders.
+    if not fast:
+        plot_reliability(y_test.values, calibrated_test_probs, raw_test_probs)
 
-    # --- SHAP feature importance: validates that evidence-completeness
-    # features actually dominate the model, which is what the rule-based
-    # Evidence Completeness Checker (src/evidence.py) is designed around. ---
-    if verbose:
-        print("Generating SHAP summary plot...")
-    import shap
+        # --- SHAP feature importance: validates that evidence-completeness
+        # features actually dominate the model, which is what the rule-based
+        # Evidence Completeness Checker (src/evidence.py) is designed around. ---
+        if verbose:
+            print("Generating SHAP summary plot...")
+        import shap
 
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X_test)
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_test)
 
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
 
-    plt.figure()
-    shap.summary_plot(shap_values, X_test, show=False, max_display=15)
-    plt.tight_layout()
-    plt.savefig(config.ARTIFACTS_DIR / "shap_summary.png", dpi=150, bbox_inches="tight")
-    plt.close()
-    if verbose:
-        print(f"SHAP summary plot saved to {config.ARTIFACTS_DIR / 'shap_summary.png'}")
+        plt.figure()
+        shap.summary_plot(shap_values, X_test, show=False, max_display=15)
+        plt.tight_layout()
+        plt.savefig(config.ARTIFACTS_DIR / "shap_summary.png", dpi=150, bbox_inches="tight")
+        plt.close()
+        if verbose:
+            print(f"SHAP summary plot saved to {config.ARTIFACTS_DIR / 'shap_summary.png'}")
 
     with open(config.MODELS_DIR / "detector.pkl", "wb") as f:
         pickle.dump(model, f)
@@ -131,7 +144,12 @@ def train(seed=config.SEED, verbose=True):
     # including false-positive cost") ---
     from src.backtest import score_test_set, compute_false_positive_costs
 
-    scored_test = score_test_set(test_raw, model, calibrator, feature_cols, train_raw)
+    # score_dispute() re-scores the model once per missing evidence type on
+    # top of the base call, so this is the most expensive per-row step in the
+    # whole function -- capped in fast mode on top of fast mode's already
+    # smaller test slice, for extra headroom on a throttled container.
+    fp_sample = test_raw.head(300) if fast else test_raw
+    scored_test = score_test_set(fp_sample, model, calibrator, feature_cols, train_raw)
     fp_costs = compute_false_positive_costs(scored_test)
     if verbose:
         print("\n--- False-Positive Cost Analysis ---")
@@ -145,7 +163,7 @@ def train(seed=config.SEED, verbose=True):
 
     if verbose:
         print("\n--- Training Dispute Prevention Model ---")
-    train_prevention_model(seed=seed, verbose=verbose)
+    train_prevention_model(seed=seed, verbose=verbose, fast=fast)
 
     return model, calibrator, feature_cols, metrics
 
